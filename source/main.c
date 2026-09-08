@@ -1,4 +1,4 @@
-/* Native development viewer. It does not implement NSMBW gameplay. */
+/* Authored movement test and Wii placement viewer; not faithful NSMBW gameplay. */
 #include <3ds.h>
 #include <citro2d.h>
 #include <stdio.h>
@@ -8,16 +8,19 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include "core.h"
+#include "movement.h"
 
 static Scene scene;
 static uint8_t file_bytes[SCENE_MAX_BYTES];
 static float camera_x, camera_y;
 static const float scale=0.625f; /* 640x360 inspection view -> 400x225 */
 static char status[128];
-typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped; } Sample;
+typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped, mode; } Sample;
 #define SAMPLE_CAPACITY 3600
 static Sample samples[SAMPLE_CAPACITY];
 static unsigned sample_count;
+static Player player;
+static unsigned mode; /* 0: authored course; 1/2: Wii placement inspector */
 static bool diagnostic_console;
 static int startup_log_error;
 #define STARTUP_LOG "sdmc:/nsmbw-startup.log"
@@ -116,17 +119,34 @@ static unsigned draw_scene(void) {
     }
     return visible;
 }
+static unsigned draw_movement(void) {
+    unsigned visible=0;
+    for(unsigned i=0;i<movement_test_level.count;i++) {
+        const Solid *s=&movement_test_level.solids[i];
+        if(s->x+s->w<=camera_x||s->x>=camera_x+640) continue;
+        visible++;
+        clipped_rect((s->x-camera_x)*scale,7.5f+(s->y-camera_y)*scale,
+                     s->w*scale,s->h*scale,C2D_Color32(63,117,159,255));
+    }
+    clipped_rect((movement_test_level.goal_x-camera_x)*scale,7.5f+(320-camera_y)*scale,
+                 4,128*scale,C2D_Color32(93,240,120,255));
+    if(!player.respawn_ticks) {
+        clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,
+                     16*scale,player.height*scale,C2D_Color32(255,205,80,255));
+    }
+    return visible;
+}
 static int save_samples(const FixedClock *clock) {
     char path[128];
     /* Exclusive create prevents accidental overwrite of an earlier capture. */
     snprintf(path,sizeof(path),"sdmc:/3ds/nsmbw-prototype/viewer-%llu.csv",(unsigned long long)osGetTime());
     FILE *f=fopen(path,"wx");
     if(!f) return 0;
-    fprintf(f,"# viewer only; not game performance; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
-            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)),clock->clipped_seconds);
-    fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps\n");
-    for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu\n",i,samples[i].frame_ms,
-        samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped);
+    fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
+            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)),clock->clipped_seconds);
+    fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode\n");
+    for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu\n",i,samples[i].frame_ms,
+        samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode);
     int failed=ferror(f);
     if(fclose(f)!=0) failed=1;
     return !failed;
@@ -184,43 +204,57 @@ int main(void) {
             diagnostic_error(message); goto cleanup;
         }
     }
-    checkpoint("[10] Loading area 1 from SD");
-    if(!load_area(1)) {
-        checkpoint("Data: 3ds/nsmbw-prototype/data/");
-        diagnostic_error(status); goto cleanup;
-    }
-    checkpoint(status);
-    checkpoint("[11] Data ready; preparing first frame");
+    checkpoint("[10] Starting authored movement course");
+    player_reset(&player,&movement_test_level);
+    camera_x=0; camera_y=160;
+    checkpoint("Movement test 1 - NOT World 1-1");
+    checkpoint("[11] Course ready; preparing first frame");
     if(!diagnostic_continue()) { exit_code=0; goto cleanup; }
     InputState input={0}; FixedClock clock={0}; Actions actions={0};
-    unsigned frames=0, shown=0, area=1; uint32_t pending=0;
+    unsigned frames=0, shown=0; uint32_t pending=0;
     uint64_t last=svcGetSystemTick();
     while(aptMainLoop()) {
         uint64_t now=svcGetSystemTick();
         double elapsed=(double)(now-last)/(double)SYSCLOCK_ARM11; last=now;
         hidScanInput(); uint32_t held=hidKeysHeld(), down=hidKeysDown();
         if((held&(KEY_SELECT|KEY_START))==(KEY_SELECT|KEY_START)) break;
-        if((down&KEY_SELECT)&&!(held&KEY_START)) { area=area==1?2:1; load_area(area); }
+        if((down&KEY_SELECT)&&!(held&KEY_START)) {
+            mode=(mode+1)%3;
+            input=(InputState){0}; pending=0;
+            if(mode) load_area(mode);
+            else { camera_x=player_camera_x(&player,&movement_test_level,640); camera_y=160; }
+        }
+        if(!mode&&(down&KEY_TOUCH)) {
+            player_reset(&player,&movement_test_level);
+            input=(InputState){0}; pending=0;
+        }
         circlePosition circle; hidCircleRead(&circle);
         pending|=buttons_from_hid(down);
         unsigned steps=clock_advance(&clock,elapsed);
         for(unsigned i=0;i<steps;i++) {
             actions=input_step(&input,buttons_from_hid(held)|pending,circle.dx,circle.dy,0);
             pending=0;
-            if(!actions.paused) {
+            if(!mode) {
+                player_step(&player,&movement_test_level,&actions);
+                camera_x=player_camera_x(&player,&movement_test_level,640); camera_y=160;
+            } else if(!actions.paused) {
                 float speed=actions.run_fire?8:4;
                 camera_x+=actions.move_x*speed; camera_y+=actions.move_y*speed;
                 camera_x=maxf(0,minf(camera_x,1048560)); camera_y=maxf(0,minf(camera_y,1048560));
             }
         }
         if(frames&&frames%15==0) {
-            printf("\x1b[HNSMBW viewer - STARTUP DIAGNOSTIC 1\n");
-            printf("GEOMETRY ONLY - NO GAMEPLAY\n\n");
-            printf("%-39s\n",status);
-            printf("Move: D-pad / Circle Pad\nY: faster camera\nSELECT: change area\nSTART: pause\nSELECT+START: save log and exit\n\n");
-            printf("Visible: %-5u / %-5lu\n",shown,(unsigned long)scene.count);
-            printf("X/Y: %-9.1f %-9.1f\n",camera_x,camera_y);
-            printf("Jump:%d X carry:%d R:%d Tilt:%2d\n",actions.jump_held,!!(held&KEY_X),!!(held&KEY_R),actions.tilt);
+            consoleClear();
+            if(!mode) {
+                printf("MOVEMENT TEST 1\nAuthored course - not World 1-1\n\n");
+                printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
+                printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
+                printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green finish pole"));
+            } else {
+                printf("WORLD 1-1 PLACEMENT INSPECTOR\nOutlines only - no player collision\n\n%s\n",status);
+                printf("D-pad: camera   Y: faster\nVisible: %u / %lu\n",shown,(unsigned long)scene.count);
+            }
+            printf("\nSELECT: test / area 1 / area 2\nSTART: pause\nSELECT+START: save and exit\n");
             printf("Paused: %d   Dropped: %-8lu\n",input.paused,(unsigned long)clock.discarded_steps);
             printf("Capture: %-4u / %u frames\n",sample_count,SAMPLE_CAPACITY);
             gfxFlushBuffers();
@@ -230,7 +264,7 @@ int main(void) {
             diagnostic_error("ERROR: C3D_FrameBegin failed"); goto cleanup;
         }
         C2D_TargetClear(target,C2D_Color32(12,18,30,255)); C2D_SceneBegin(target);
-        shown=draw_scene();
+        shown=mode?draw_scene():draw_movement();
         C3D_FrameEnd(0);
         if(!frames) {
             checkpoint("[13] First frame submitted; syncing GPU");
@@ -241,7 +275,7 @@ int main(void) {
         }
         /* Timings belong to the viewer; the first frame has no prior timing. */
         if(frames&&sample_count<SAMPLE_CAPACITY) samples[sample_count++]=(Sample){(float)(elapsed*1000),
-            C3D_GetProcessingTime(),C3D_GetDrawingTime(),shown,clock.discarded_steps};
+            C3D_GetProcessingTime(),C3D_GetDrawingTime(),shown,clock.discarded_steps,mode};
         frames++;
     }
     checkpoint("[15] Leaving viewer; saving timing CSV");

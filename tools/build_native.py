@@ -72,7 +72,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "hardware_tested": False, "gameplay_implemented": False,
               "commands": [], "sources": {}, "artifacts": {}}
-    for file in [ROOT / "source/core.c", ROOT / "source/main.c", ROOT / "include/core.h", ROOT / "cia.rsf", Path(__file__)]:
+    for file in [ROOT / "source/core.c", ROOT / "source/main.c", ROOT / "source/movement.c", ROOT / "include/movement.h", ROOT / "include/core.h", ROOT / "cia.rsf", Path(__file__)]:
         report["sources"][str(file.relative_to(ROOT))] = hashlib.sha256(file.read_bytes()).hexdigest()
     if args.cia:
         for name in ("meta/banner.bnr", "tools/verify_cia.py"):
@@ -102,7 +102,7 @@ def main():
              "-march=armv6k", "-mtune=mpcore", "-mfloat-abi=hard", "-mtp=soft", "-mword-relocations", "-D__3DS__",
              "-I" + str(ROOT / "include"), "-I" + str(dkp / "libctru/include")]
     objects = []
-    for name in ("core", "main"):
+    for name in ("core", "movement", "main"):
         obj = out / (name + ".o")
         run([gcc, *flags, "-c", str(ROOT / "source" / (name + ".c")), "-o", str(obj)])
         objects.append(str(obj))
@@ -113,7 +113,7 @@ def main():
     run([three_dsx, str(elf), str(out / "nsmbw-inspector.3dsx")])
     if args.cia:
         icon = out / "nsmbw-inspector.smdh"
-        run([smdhtool, "--create", "NSMBW Geometry Inspector", "Development viewer - no gameplay",
+        run([smdhtool, "--create", "NSMBW Geometry Inspector", "Movement test and placement viewer",
                         "Homebrew prototype", str(dkp / "libctru/default_icon.png"), str(icon)])
         # The full access descriptor is provided in cia.rsf; no retail files/keys.
         run([makerom, "-f", "cia", "-o", str(out / "nsmbw-inspector.cia"),
@@ -131,7 +131,7 @@ def main():
             report["artifacts"][file.name] = {"bytes": file.stat().st_size, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
     report["status"] = "built_unvalidated"
     save_report()
-    print("Build finished. This is a geometry inspector, not a playable NSMBW port.")
+    print("Build finished. Authored movement test and placement viewer; not a playable NSMBW port.")
     return 0
 
 

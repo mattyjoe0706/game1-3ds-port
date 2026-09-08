@@ -1,5 +1,14 @@
 # Reproduce portable checks
 
+Movement test 1 has an additional standalone portable suite:
+
+```text
+clang --target=wasm32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding -nostdlib -I include source/movement.c tests/movement_tests.c -Wl,--no-entry -Wl,--export-all -o tests/movement-tests.wasm
+node tests/run_movement_tests.mjs tests/movement-tests.wasm
+```
+
+For native host tests, compile source/core.c, source/movement.c, tests/core_tests.c, tests/movement_tests.c and tests/host_main.c together. These validate the authored movement simulation, not Wii gameplay fidelity. See MOVEMENT_TEST.md for current scope; the historical checks below remain applicable to the placement converter.
+
 From the project root, with Python 3.10+, Clang built with WebAssembly support, wasm-ld, and Node installed:
 
 ```text

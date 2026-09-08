@@ -1,12 +1,14 @@
 # NSMBW New 3DS prototype work
 
-**Current deliverable: source code and converted placement data for a development viewer. No playable game, CIA, or 3DSX binary has been produced.**
+**Current work: an authored movement/collision test course plus the World 1-1 placement inspector. See [MOVEMENT_TEST.md](MOVEMENT_TEST.md) for controls, tests and remaining blockers. This is not a playable NSMBW port.**
+
+Earlier CI builds produced CIA and 3DSX binaries, and the placement viewer rendered successfully through Homebrew Launcher on the user's New 3DS XL. Two short viewer captures averaged about 59.83 fps; they do not measure this new movement revision. CIA launch remains unresolved. The new movement source passes portable tests and awaits native CI and handheld testing. The older feasibility/build notes below describe the initial viewer delivery and are superseded by this status, MOVEMENT_TEST.md and LAUNCH_STATUS.md.
 
 This continues the native-port feasibility work for the user's SMNE01 revision 2 WBFS. The original image was preserved. CIA is the intended installation format; a 3DSX target is retained for development.
 
 ## This repository
 
-The active files are `include/core.h`, `source/core.c`, `source/main.c`, and the top-level `tests/` directory. There is no `core.main` file. Build using the root Makefile or `tools/build_native.py`. The root Makefile delegates to the same Python build driver as CI, including citro2d/citro3d/libctru linkage.
+The active files include `include/core.h`, `include/movement.h`, `source/core.c`, `source/movement.c`, `source/main.c`, and the top-level `tests/` directory. There is no `core.main` file. Build using the root Makefile or `tools/build_native.py`. The root Makefile delegates to the same Python build driver as CI, including citro2d/citro3d/libctru linkage.
 
 The active workflow is `.github/workflows/native-build.yml`, triggered on pushes to `main` or manually. The pre-existing root `build.yml` and `source/tests/Makefile` / `source/tests/README.md` are preserved draft files and are not used by this build. Their staged Git state has not been changed.
 
