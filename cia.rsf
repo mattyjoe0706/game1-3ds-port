@@ -105,7 +105,8 @@ AccessControlInfo:
 SystemControlInfo:
   RemasterVersion: 0
   StackSize: 0x10000
-  SaveDataSize: 0
+  # makerom requires a size unit, including when no save archive is needed.
+  SaveDataSize: 0KB
   Dependency:
     am: 0x0004013000001502
     cfg: 0x0004013000001702
