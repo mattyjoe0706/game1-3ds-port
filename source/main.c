@@ -90,7 +90,7 @@ int main(void) {
         while(aptMainLoop()) { hidScanInput(); if(hidKeysDown()&KEY_START) break; gspWaitForVBlank(); }
         gfxExit(); return 1;
     }
-    osSetSpeedup(true);
+    osSetSpeedupEnable(true);
     if(!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) { gfxExit(); return 1; }
     if(!C2D_Init(4096)) { C3D_Fini(); gfxExit(); return 1; }
     C2D_Prepare();

@@ -47,6 +47,19 @@ jobs:
         shell: bash
         run: |
           python3 tools/build_native.py --devkitpro /opt/devkitpro --output build-ci --cia --makerom .ci-tools/Project_CTR/makerom/bin/makerom > ci-logs/native-console.txt 2>&1
+      - name: Show native build diagnostics
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ('ci-logs/native-console.txt', 'build-ci/build.log'):
+              path = Path(name)
+              if path.is_file():
+                  print(f'::group::{name}', flush=True)
+                  print(path.read_text(errors='replace'), flush=True)
+                  print('::endgroup::', flush=True)
+          PY
       - name: Return artifacts and logs
         if: always()
         uses: actions/upload-artifact@v4
