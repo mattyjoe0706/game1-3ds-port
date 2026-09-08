@@ -6,6 +6,7 @@ BasicInfo:
   CompanyCode: "00"
   ProductCode: "CTR-P-NSCI"
   ContentType: Application
+  Logo: Homebrew
 TitleInfo:
   UniqueId: 0xF7311
   Category: Application

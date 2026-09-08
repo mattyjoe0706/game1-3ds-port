@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include "core.h"
 
 static Scene scene;
@@ -16,6 +18,53 @@ typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped; } Sa
 #define SAMPLE_CAPACITY 3600
 static Sample samples[SAMPLE_CAPACITY];
 static unsigned sample_count;
+static bool diagnostic_console;
+static int startup_log_error;
+#define STARTUP_LOG "sdmc:/nsmbw-startup.log"
+
+/* Append and close every checkpoint so a later hang cannot hold it in stdio.
+ * The SD root works even if the application's data directory is missing. */
+static void checkpoint(const char *message) {
+    if(diagnostic_console) {
+        printf("%s\n",message);
+        fflush(stdout);
+        gfxFlushBuffers();
+    }
+    if(!startup_log_error) {
+        FILE *f=fopen(STARTUP_LOG,"a");
+        if(!f) startup_log_error=errno?errno:EIO;
+        else {
+            if(fprintf(f,"%s\n",message)<0) startup_log_error=errno?errno:EIO;
+            if(fclose(f)!=0) startup_log_error=errno?errno:EIO;
+        }
+        if(startup_log_error&&diagnostic_console) {
+            printf("SD startup log unavailable: errno %d\n",startup_log_error);
+            fflush(stdout); gfxFlushBuffers();
+        }
+    }
+}
+
+static void diagnostic_error(const char *message) {
+    checkpoint(message);
+    checkpoint("Press B to return to the launcher.");
+    /* Require a new press, not a key still held from the previous screen. */
+    while(aptMainLoop()) {
+        hidScanInput();
+        if(hidKeysDown()&KEY_B) break;
+        gspWaitForVBlank();
+    }
+}
+
+static bool diagnostic_continue(void) {
+    checkpoint("A: continue startup   B: exit");
+    while(aptMainLoop()) {
+        hidScanInput();
+        if(hidKeysDown()&KEY_B) return false;
+        if(hidKeysDown()&KEY_A) return true;
+        gspWaitForVBlank();
+    }
+    return false;
+}
 
 static uint32_t buttons_from_hid(uint32_t k) {
     uint32_t b=0;
@@ -30,7 +79,7 @@ static int load_area(unsigned area) {
     char path[128];
     snprintf(path,sizeof(path),"sdmc:/3ds/nsmbw-prototype/data/01-01-area%u.nsc",area);
     FILE *f=fopen(path,"rb");
-    if(!f) { scene.count=0; snprintf(status,sizeof(status),"Missing area %u data on SD.",area); return 0; }
+    if(!f) { int e=errno; scene.count=0; snprintf(status,sizeof(status),"Area %u open failed: errno %d",area,e); return 0; }
     size_t n=fread(file_bytes,1,sizeof(file_bytes),f);
     int extra=fgetc(f), error=ferror(f);
     fclose(f);
@@ -83,20 +132,66 @@ static int save_samples(const FixedClock *clock) {
     return !failed;
 }
 int main(void) {
-    gfxInitDefault(); gfxSet3D(false); consoleInit(GFX_BOTTOM,NULL);
-    bool is_new=false;
-    if(R_FAILED(APT_CheckNew3DS(&is_new))||!is_new) {
-        printf("This development viewer targets\nNew Nintendo 3DS systems.\nPress START to exit.\n");
-        while(aptMainLoop()) { hidScanInput(); if(hidKeysDown()&KEY_START) break; gspWaitForVBlank(); }
+    char message[128];
+    bool c3d_ready=false, c2d_ready=false;
+    int exit_code=1;
+    snprintf(message,sizeof(message),"\nSTARTUP DIAGNOSTIC 1: %llu",(unsigned long long)osGetTime());
+    checkpoint(message);
+    checkpoint("[00] Enter main; starting gfxInitDefault");
+    gfxInitDefault();
+    checkpoint("[01] Graphics ready; starting console");
+    gfxSet3D(false);
+    if(!consoleInit(GFX_BOTTOM,NULL)) {
+        checkpoint("ERROR: consoleInit returned NULL");
         gfxExit(); return 1;
     }
+    diagnostic_console=true;
+    setvbuf(stdout,NULL,_IONBF,0);
+    checkpoint("STARTUP DIAGNOSTIC 1");
+    checkpoint("[02] Bottom console ready");
+    if(startup_log_error) {
+        snprintf(message,sizeof(message),"Startup log failed: errno %d",startup_log_error);
+        checkpoint(message);
+    }
+    checkpoint("Log: SD root /nsmbw-startup.log");
+    if(!diagnostic_continue()) { exit_code=0; goto cleanup; }
+    checkpoint("[03] Checking New 3DS model");
+    bool is_new=false;
+    Result model_result=APT_CheckNew3DS(&is_new);
+    if(R_FAILED(model_result)) {
+        snprintf(message,sizeof(message),"ERROR: model query 0x%08lX",(unsigned long)(uint32_t)model_result);
+        diagnostic_error(message); goto cleanup;
+    }
+    if(!is_new) { diagnostic_error("ERROR: New 3DS system required"); goto cleanup; }
+    checkpoint("[04] Model OK; enabling speedup");
     osSetSpeedupEnable(true);
-    if(!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) { gfxExit(); return 1; }
-    if(!C2D_Init(4096)) { C3D_Fini(); gfxExit(); return 1; }
+    checkpoint("[05] Speedup set; starting citro3d");
+    if(!C3D_Init(C3D_DEFAULT_CMDBUF_SIZE)) { diagnostic_error("ERROR: C3D_Init failed"); goto cleanup; }
+    c3d_ready=true;
+    checkpoint("[06] Citro3d ready; starting citro2d");
+    if(!C2D_Init(4096)) { diagnostic_error("ERROR: C2D_Init failed"); goto cleanup; }
+    c2d_ready=true;
+    checkpoint("[07] Citro2d ready; preparing renderer");
     C2D_Prepare();
+    checkpoint("[08] Creating top screen target");
     C3D_RenderTarget *target=C2D_CreateScreenTarget(GFX_TOP,GFX_LEFT);
-    if(!target) { C2D_Fini(); C3D_Fini(); gfxExit(); return 1; }
-    load_area(1);
+    if(!target) { diagnostic_error("ERROR: screen target creation failed"); goto cleanup; }
+    checkpoint("[09] Target ready; checking SD folders");
+    const char *folders[]={"sdmc:/3ds","sdmc:/3ds/nsmbw-prototype"};
+    for(unsigned i=0;i<sizeof(folders)/sizeof(folders[0]);i++) {
+        if(mkdir(folders[i],0777)!=0&&errno!=EEXIST) {
+            snprintf(message,sizeof(message),"ERROR: mkdir failed: errno %d",errno);
+            diagnostic_error(message); goto cleanup;
+        }
+    }
+    checkpoint("[10] Loading area 1 from SD");
+    if(!load_area(1)) {
+        checkpoint("Data: 3ds/nsmbw-prototype/data/");
+        diagnostic_error(status); goto cleanup;
+    }
+    checkpoint(status);
+    checkpoint("[11] Data ready; preparing first frame");
+    if(!diagnostic_continue()) { exit_code=0; goto cleanup; }
     InputState input={0}; FixedClock clock={0}; Actions actions={0};
     unsigned frames=0, shown=0, area=1; uint32_t pending=0;
     uint64_t last=svcGetSystemTick();
@@ -118,8 +213,8 @@ int main(void) {
                 camera_x=maxf(0,minf(camera_x,1048560)); camera_y=maxf(0,minf(camera_y,1048560));
             }
         }
-        if(frames%15==0) {
-            printf("\x1b[HNSMBW development viewer\n");
+        if(frames&&frames%15==0) {
+            printf("\x1b[HNSMBW viewer - STARTUP DIAGNOSTIC 1\n");
             printf("GEOMETRY ONLY - NO GAMEPLAY\n\n");
             printf("%-39s\n",status);
             printf("Move: D-pad / Circle Pad\nY: faster camera\nSELECT: change area\nSTART: pause\nSELECT+START: save log and exit\n\n");
@@ -128,19 +223,40 @@ int main(void) {
             printf("Jump:%d X carry:%d R:%d Tilt:%2d\n",actions.jump_held,!!(held&KEY_X),!!(held&KEY_R),actions.tilt);
             printf("Paused: %d   Dropped: %-8lu\n",input.paused,(unsigned long)clock.discarded_steps);
             printf("Capture: %-4u / %u frames\n",sample_count,SAMPLE_CAPACITY);
+            gfxFlushBuffers();
         }
-        C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
+        if(!frames) checkpoint("[12] Entering first C3D_FrameBegin");
+        if(!C3D_FrameBegin(C3D_FRAME_SYNCDRAW)) {
+            diagnostic_error("ERROR: C3D_FrameBegin failed"); goto cleanup;
+        }
         C2D_TargetClear(target,C2D_Color32(12,18,30,255)); C2D_SceneBegin(target);
         shown=draw_scene();
         C3D_FrameEnd(0);
+        if(!frames) {
+            checkpoint("[13] First frame submitted; syncing GPU");
+            C3D_FrameSync();
+            checkpoint("[14] First frame synced; viewer running");
+            /* Exclude diagnostic disk I/O from the next frame interval. */
+            last=svcGetSystemTick();
+        }
         /* Timings belong to the viewer; the first frame has no prior timing. */
         if(frames&&sample_count<SAMPLE_CAPACITY) samples[sample_count++]=(Sample){(float)(elapsed*1000),
             C3D_GetProcessingTime(),C3D_GetDrawingTime(),shown,clock.discarded_steps};
         frames++;
     }
+    checkpoint("[15] Leaving viewer; saving timing CSV");
     if(!save_samples(&clock)) {
-        printf("\nCould not save viewer timing log.\nPress B to exit.\n");
-        while(aptMainLoop()) { hidScanInput(); if(hidKeysDown()&KEY_B) break; gspWaitForVBlank(); }
+        snprintf(message,sizeof(message),"ERROR: CSV save failed: errno %d",errno);
+        diagnostic_error(message);
+    } else {
+        checkpoint("[16] Timing CSV saved");
+        exit_code=0;
     }
-    C2D_Fini(); C3D_Fini(); gfxExit(); return 0;
+cleanup:
+    checkpoint("[17] Releasing graphics resources");
+    if(c2d_ready) C2D_Fini();
+    if(c3d_ready) C3D_Fini();
+    checkpoint("[18] Returning to launcher");
+    diagnostic_console=false;
+    gfxExit(); return exit_code;
 }

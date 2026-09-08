@@ -10,6 +10,7 @@ import subprocess
 import sys
 import hashlib
 import json
+from verify_cia import verify_cia
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,6 +52,8 @@ def main():
         missing.append("makerom")
     if args.cia and not smdhtool:
         missing.append("smdhtool")
+    if args.cia and not (ROOT / "meta/banner.bnr").is_file():
+        missing.append(str(ROOT / "meta/banner.bnr"))
     if args.cia and not (dkp / "libctru/default_icon.png").is_file():
         missing.append(str(dkp / "libctru/default_icon.png"))
     if missing:
@@ -71,6 +74,9 @@ def main():
               "commands": [], "sources": {}, "artifacts": {}}
     for file in [ROOT / "source/core.c", ROOT / "source/main.c", ROOT / "include/core.h", ROOT / "cia.rsf", Path(__file__)]:
         report["sources"][str(file.relative_to(ROOT))] = hashlib.sha256(file.read_bytes()).hexdigest()
+    if args.cia:
+        for name in ("meta/banner.bnr", "tools/verify_cia.py"):
+            report["sources"][name] = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
     def save_report():
         (out / "build-report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     def run(command):
@@ -111,7 +117,15 @@ def main():
                         "Homebrew prototype", str(dkp / "libctru/default_icon.png"), str(icon)])
         # The full access descriptor is provided in cia.rsf; no retail files/keys.
         run([makerom, "-f", "cia", "-o", str(out / "nsmbw-inspector.cia"),
-                        "-rsf", str(ROOT / "cia.rsf"), "-target", "t", "-elf", str(elf), "-icon", str(icon)])
+                        "-rsf", str(ROOT / "cia.rsf"), "-target", "t", "-elf", str(elf), "-icon", str(icon),
+                        "-exefslogo", "-banner", str(ROOT / "meta/banner.bnr")])
+        try:
+            report["cia_structure"] = verify_cia(out / "nsmbw-inspector.cia")
+        except ValueError as error:
+            report["status"] = "failed"
+            report["error"] = str(error)
+            save_report()
+            raise
     for file in out.iterdir():
         if file.suffix in (".elf", ".3dsx", ".cia", ".smdh", ".map"):
             report["artifacts"][file.name] = {"bytes": file.stat().st_size, "sha256": hashlib.sha256(file.read_bytes()).hexdigest()}
@@ -124,6 +138,6 @@ def main():
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except (OSError, subprocess.CalledProcessError) as error:
+    except (OSError, ValueError, subprocess.CalledProcessError) as error:
         print(f"Build failed: {error}", file=sys.stderr)
         sys.exit(1)
