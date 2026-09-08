@@ -1,0 +1,33 @@
+name: Build 3DS ROM
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}   # lets you trigger a build manually from the Actions tab
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: devkitpro/devkitarm:latest   # pin to a dated tag (e.g. devkitpro/devkitarm:20230911) for reproducible builds
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Build with devkitARM
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export DEVKITARM=$DEVKITPRO/devkitARM
+          export PATH=$DEVKITPRO/tools/bin:$PATH
+          make
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: 3ds-build-output
+          path: |
+            **/*.3dsx
+            **/*.cia
+            **/*.elf
+          if-no-files-found: warn

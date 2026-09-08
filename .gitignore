@@ -1,0 +1,14 @@
+/sdmc/
+/data/
+/romfs/
+/build*/
+/ci-logs/
+/.ci-tools/
+/reports/
+__pycache__/
+*.pyc
+*.wbfs
+*.iso
+*.arc
+*.nsc
+*.wasm

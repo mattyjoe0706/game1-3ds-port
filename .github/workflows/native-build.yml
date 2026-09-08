@@ -1,0 +1,65 @@
+name: Native 3DS inspector build
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container: devkitpro/devkitarm:20260610
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Check out inspector source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check out official makerom release
+        uses: actions/checkout@v4
+        with:
+          repository: 3DSGuy/Project_CTR
+          ref: makerom-v0.19.0
+          path: .ci-tools/Project_CTR
+          submodules: recursive
+          persist-credentials: false
+      - name: Record toolchain provenance
+        shell: bash
+        run: |
+          mkdir -p ci-logs
+          git -C .ci-tools/Project_CTR rev-parse HEAD > ci-logs/makerom-commit.txt
+          /opt/devkitpro/devkitARM/bin/arm-none-eabi-gcc --version > ci-logs/compiler.txt
+          dkp-pacman -Q > ci-logs/packages.txt
+      - name: Run source-only portable tests
+        shell: bash
+        run: |
+          python3 -m unittest discover -s tests -v > ci-logs/python-tests.txt 2>&1
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I include source/core.c tests/core_tests.c tests/host_main.c -o /tmp/core-tests
+          /tmp/core-tests > ci-logs/core-tests.txt
+      - name: Build makerom with the container's host compiler
+        shell: bash
+        run: |
+          make -C .ci-tools/Project_CTR/makerom deps > ci-logs/makerom-build.txt 2>&1
+          make -C .ci-tools/Project_CTR/makerom -j2 >> ci-logs/makerom-build.txt 2>&1
+      - name: Build ELF, 3DSX and CIA
+        shell: bash
+        run: |
+          python3 tools/build_native.py --devkitpro /opt/devkitpro --output build-ci --cia --makerom .ci-tools/Project_CTR/makerom/bin/makerom > ci-logs/native-console.txt 2>&1
+      - name: Return artifacts and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nsmbw-inspector-unvalidated
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            build-ci/*.elf
+            build-ci/*.3dsx
+            build-ci/*.cia
+            build-ci/*.smdh
+            build-ci/*.map
+            build-ci/*.json
+            build-ci/*.log
+            ci-logs/
