@@ -6,7 +6,7 @@ static const Solid course[]={
     {928,416,48,32}, {976,384,48,64}, {1024,352,48,96},
     {1376,400,80,48}, {1552,368,112,16}, {1760,416,64,32}
 };
-const MovementLevel movement_test_level={course,sizeof(course)/sizeof(course[0]),2048,640,64,416,1968};
+const MovementLevel movement_test_level={course,sizeof(course)/sizeof(course[0]),2048,640,64,416,1968,0,0};
 static float approach(float v,float target,float amount) {
     if(v<target) return v+amount>target?target:v+amount;
     return v-amount<target?target:v-amount;
@@ -38,15 +38,18 @@ void player_step(Player *p,const MovementLevel *l,const Actions *a) {
         }
         if(!blocked) { p->y-=16; p->height=32; p->crouched=0; }
     }
+    int was_grounded=p->grounded;
     float speed=p->crouched?1.0f:(a->run_fire?4.0f:2.25f);
     p->vx=approach(p->vx,a->move_x*speed,a->move_x?0.4f:0.5f);
-    if(a->jump_pressed&&p->grounded) { p->vy=-9.4f; p->grounded=0; }
+    if(a->jump_pressed&&p->grounded) { p->vy=-9.4f; p->grounded=0; was_grounded=0; }
     if(!a->jump_held&&p->vy< -3.5f) p->vy=-3.5f;
     p->vy+=0.4f; if(p->vy>10) p->vy=10;
     float nx=p->x+p->vx;
     for(unsigned i=0;i<l->count;i++) {
         const Solid *s=&l->solids[i];
         if(!overlaps(p->y,p->height,s->y,s->h)) continue;
+        /* Permit the small rise from a ramp onto its adjoining flat tile. */
+        if(was_grounded&&p->on_slope&&p->y+p->height-s->y<=4.01f) continue;
         if(p->vx>0&&p->x+16<=s->x&&nx+16>s->x) { nx=s->x-16; }
         if(p->vx<0&&p->x>=s->x+s->w&&nx<s->x+s->w) { nx=s->x+s->w; }
     }
@@ -59,10 +62,30 @@ void player_step(Player *p,const MovementLevel *l,const Actions *a) {
     for(unsigned i=0;i<l->count;i++) {
         const Solid *s=&l->solids[i];
         if(!overlaps(p->x,16,s->x,s->w)) continue;
-        if(p->vy>=0&&p->y+p->height<=s->y&&ny+p->height>=s->y) {
+        float allowance=was_grounded&&p->on_slope?4.01f:0;
+        if(p->vy>=0&&p->y+p->height<=s->y+allowance&&ny+p->height>=s->y) {
             ny=s->y-p->height; p->grounded=1;
         }
         if(p->vy<0&&p->y>=s->y+s->h&&ny<s->y+s->h) ny=s->y+s->h;
+    }
+    p->on_slope=0;
+    for(unsigned i=0;i<l->surface_count;i++) {
+        const Surface *s=&l->surfaces[i];
+        if(!overlaps(p->x,16,s->x,s->w)||p->vy<0) continue;
+        int slope=s->left!=s->right;
+        float foot=p->x+8;
+        /* Ramp support uses the foot centre; flat platforms use full width. */
+        if(slope&&(foot<s->x||foot>=s->x+s->w)) continue;
+        float t=(foot-s->x)/s->w;
+        if(t<0) t=0;
+        if(t>1) t=1;
+        float floor=s->left+(s->right-s->left)*t;
+        float old_bottom=p->y+p->height;
+        float reach=was_grounded&&slope?4.01f:0;
+        if(old_bottom<=floor+reach&&ny+p->height+reach>=floor&&
+           (!p->grounded||floor<=ny+p->height)) {
+            ny=floor-p->height; p->grounded=1; p->on_slope=slope;
+        }
     }
     if(ny!=p->y+p->vy||p->grounded) p->vy=0;
     p->y=ny;

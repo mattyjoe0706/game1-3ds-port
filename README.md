@@ -1,5 +1,20 @@
 # NSMBW New 3DS prototype work
 
+**Latest source: Terrain test 1.** The player and textured renderer now connect
+to the real opening section of World 1-1. Portable tests pass, including traversal
+of the converted section. Native CI compilation and handheld validation remain
+pending. See [TERRAIN_TEST.md](TERRAIN_TEST.md) for the separate local data package,
+installation, controls and limitations. This is still an approximate movement
+test with a yellow player, not a complete port. Earlier milestone notes follow.
+
+**2026-09-08 terrain update:** `tools/convert_tiles.py` now decodes the original
+area 1 tilesets and expands the real terrain into a local image and collision
+inspection data. All 640 object arrays matched the reference editor. See
+[TERRAIN_DECODER.md](TERRAIN_DECODER.md) for validation and remaining integration.
+This converter update does not change the handheld application or produce a new
+playable build. The user has confirmed movement, jumping, running and restart in
+the authored movement test; that confirmation does not establish Wii fidelity.
+
 **Current work: an authored movement/collision test course plus the World 1-1 placement inspector. See [MOVEMENT_TEST.md](MOVEMENT_TEST.md) for controls, tests and remaining blockers. This is not a playable NSMBW port.**
 
 Earlier CI builds produced CIA and 3DSX binaries, and the placement viewer rendered successfully through Homebrew Launcher on the user's New 3DS XL. Two short viewer captures averaged about 59.83 fps; they do not measure this new movement revision. CIA launch remains unresolved. The new movement source passes portable tests and awaits native CI and handheld testing. The older feasibility/build notes below describe the initial viewer delivery and are superseded by this status, MOVEMENT_TEST.md and LAUNCH_STATUS.md.

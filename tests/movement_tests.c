@@ -2,7 +2,7 @@
 #define CHECK(x) do { if(!(x)) return __LINE__; } while(0)
 int run_movement_tests(void) {
     const Solid solids[]={{0,100,1000,64},{100,40,16,60},{200,20,100,16}};
-    const MovementLevel l={solids,3,1000,250,20,68,950};
+    const MovementLevel l={solids,3,1000,250,20,68,950,0,0};
     Player p; Actions a={0};
     player_reset(&p,&l);
     for(int i=0;i<120;i++) player_step(&p,&l,&a);
@@ -28,7 +28,7 @@ int run_movement_tests(void) {
     player_reset(&p,&l); p.x=220; p.y=36; p.vy=-9; a.jump_held=1;
     player_step(&p,&l,&a); CHECK(p.y==36&&p.vy==0); /* Ceiling. */
     const Solid tunnel[]={{0,100,500,64},{100,68,100,16}};
-    const MovementLevel t={tunnel,2,500,250,20,68,450};
+    const MovementLevel t={tunnel,2,500,250,20,68,450,0,0};
     player_reset(&p,&t); a=(Actions){0}; player_step(&p,&t,&a);
     a.move_y=1; player_step(&p,&t,&a); CHECK(p.crouched&&p.y==84);
     p.x=120; a.move_y=0; player_step(&p,&t,&a); CHECK(p.crouched&&p.height==16);

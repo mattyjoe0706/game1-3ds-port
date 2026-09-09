@@ -31,3 +31,26 @@ Coordinates must be nonnegative and at most 1,048,560. Dimensions must be 1–1,
 The source course headers/entrance/actor/zone layouts follow the pinned decompilation's structures and compiler padding. Layer object records are interpreted as five big-endian u16s (packed ID, tile X, tile Y, tile width, tile height) followed by FFFF. Tile values are multiplied by 16 for display. Tile expansion and behavior remain unresolved.
 
 Each original course is kept as JSON alongside its native inspection package, including its declared initial entrance ID. A subarea may lack that entrance because gameplay enters through a pipe/door destination. Its viewer origin uses the first listed entrance and explicitly records that policy; a game runtime must resolve the actual incoming entrance instead.
+# NST1 terrain section (version 1)
+
+The separate `terrain.nst` file has a 36-byte header: four magic bytes `NST1`,
+then eight little-endian u32 values: version, tile count, world width, world height,
+spawn x, spawn y, texture FNV-1a, package FNV-1a. Package hash covers bytes 0..31
+followed by all records, excluding its own four bytes. FNV-1a uses offset
+2166136261 and multiplier 16777619 with u32 wrapping. These are accidental
+corruption checks, not cryptographic authenticity checks.
+
+Each 12-byte record uses `<HHHBBBBH`: x, y, atlas tile ID, collision kind, left
+surface height, right surface height, layer, reserved zero. Coordinates are local
+pixels aligned to 16; heights are relative 0..16. Kinds are 0 decorative,
+1 solid 16x16, 2 one-way floor support. Collision applies only on layer 1.
+Records are in background-to-foreground draw order. Count capacity is 2048;
+width is 640..4096 and height is 64..1024, with all tiles/spawn in bounds.
+
+`terrain.rgba` is exactly 1,048,576 bytes: 512x512 RGBA8 in GPU ABGR byte order,
+8x8 Morton tiles, vertically flipped relative to a top-left source image. Atlas
+IDs 0..767 occupy 32 columns of 16x16 tiles. The header texture hash binds this
+file to its level. Missing, trailing, truncated or mismatched data is rejected.
+
+See TERRAIN_TEST.md for current physical approximations and scope. The older
+NSC1 outline format above remains supported independently.

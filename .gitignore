@@ -12,3 +12,6 @@ __pycache__/
 *.arc
 *.nsc
 *.wasm
+
+*.nst
+*.rgba

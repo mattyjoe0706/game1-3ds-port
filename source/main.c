@@ -9,8 +9,15 @@
 #include <sys/stat.h>
 #include "core.h"
 #include "movement.h"
+#include "terrain.h"
 
 static Scene scene;
+static Terrain terrain;
+static uint8_t terrain_bytes[TERRAIN_MAX_BYTES];
+static C3D_Tex terrain_texture;
+static bool terrain_ready;
+
+
 static uint8_t file_bytes[SCENE_MAX_BYTES];
 static float camera_x, camera_y;
 static const float scale=0.625f; /* 640x360 inspection view -> 400x225 */
@@ -20,7 +27,10 @@ typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped, mode
 static Sample samples[SAMPLE_CAPACITY];
 static unsigned sample_count;
 static Player player;
-static unsigned mode; /* 0: authored course; 1/2: Wii placement inspector */
+static unsigned mode; /* 0: authored; 1/2: placements; 3: real terrain slice */
+static const MovementLevel *active_level(void) {
+    return mode==3?&terrain.level:&movement_test_level;
+}
 static bool diagnostic_console;
 static int startup_log_error;
 #define STARTUP_LOG "sdmc:/nsmbw-startup.log"
@@ -93,6 +103,36 @@ static int load_area(unsigned area) {
     snprintf(status,sizeof(status),"Area %u: %lu placement records",area,(unsigned long)scene.count);
     return 1;
 }
+static int load_terrain(void) {
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/terrain.nst","rb");
+    if(!f) { snprintf(status,sizeof(status),"Terrain data missing (errno %d)",errno); return 0; }
+    size_t n=fread(terrain_bytes,1,sizeof(terrain_bytes),f);
+    int extra=fgetc(f),error=ferror(f); fclose(f);
+    if(error||extra!=EOF||!terrain_decode(&terrain,terrain_bytes,n)) {
+        snprintf(status,sizeof(status),"Terrain package invalid or incompatible"); return 0;
+    }
+    if(!C3D_TexInit(&terrain_texture,512,512,GPU_RGBA8)) {
+        snprintf(status,sizeof(status),"Terrain texture allocation failed"); return 0;
+    }
+    f=fopen("sdmc:/3ds/nsmbw-prototype/data/terrain.rgba","rb");
+    if(!f) {
+        C3D_TexDelete(&terrain_texture);
+        snprintf(status,sizeof(status),"Terrain texture missing (errno %d)",errno); return 0;
+    }
+    n=fread(terrain_texture.data,1,TERRAIN_TEXTURE_BYTES,f);
+    extra=fgetc(f); error=ferror(f); fclose(f);
+    if(error||extra!=EOF||n!=TERRAIN_TEXTURE_BYTES||
+       terrain_hash(terrain_texture.data,n)!=terrain.texture_hash) {
+        C3D_TexDelete(&terrain_texture);
+        snprintf(status,sizeof(status),"Terrain texture size/checksum mismatch"); return 0;
+    }
+    C3D_TexSetFilter(&terrain_texture,GPU_NEAREST,GPU_NEAREST);
+    C3D_TexSetWrap(&terrain_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    C3D_TexFlush(&terrain_texture);
+    terrain_ready=true;
+    snprintf(status,sizeof(status),"Terrain ready: %lu tiles",(unsigned long)terrain.count);
+    return 1;
+}
 static float maxf(float a,float b) { return a>b?a:b; }
 static float minf(float a,float b) { return a<b?a:b; }
 static void clipped_rect(float x,float y,float w,float h,uint32_t color) {
@@ -136,6 +176,26 @@ static unsigned draw_movement(void) {
     }
     return visible;
 }
+static unsigned draw_terrain(void) {
+    unsigned visible=0;
+    clipped_rect(0,7.5f,400,225,C2D_Color32(91,160,208,255));
+    for(unsigned i=0;i<terrain.count;i++) {
+        const TerrainTile *t=&terrain.tiles[i];
+        if(t->x+16<=camera_x||t->x>=camera_x+640||t->y+16<=camera_y||t->y>=camera_y+360) continue;
+        float u=(t->tile%32)*16/512.0f,v=1.0f-(t->tile/32)*16/512.0f;
+        Tex3DS_SubTexture sub={.width=16,.height=16,.left=u,.top=v,.right=u+16/512.0f,.bottom=v-16/512.0f};
+        C2D_Image image={&terrain_texture,&sub};
+        C2D_DrawImageAt(image,(t->x-camera_x)*scale,7.5f+(t->y-camera_y)*scale,0,NULL,scale,scale);
+        visible++;
+    }
+    clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
+    if(!player.respawn_ticks) clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,
+        16*scale,player.height*scale,C2D_Color32(255,205,80,255));
+    /* Preserve the 640x360 proportional viewport, including at vertical edges. */
+    C2D_DrawRectSolid(0,0,0,400,7.5f,C2D_Color32(12,18,30,255));
+    C2D_DrawRectSolid(0,232.5f,0,400,7.5f,C2D_Color32(12,18,30,255));
+    return visible;
+}
 static int save_samples(const FixedClock *clock) {
     char path[128];
     /* Exclusive create prevents accidental overwrite of an earlier capture. */
@@ -143,7 +203,8 @@ static int save_samples(const FixedClock *clock) {
     FILE *f=fopen(path,"wx");
     if(!f) return 0;
     fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
-            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)),clock->clipped_seconds);
+            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)),clock->clipped_seconds);
+    fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
     fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode\n");
     for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu\n",i,samples[i].frame_ms,
         samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode);
@@ -204,10 +265,13 @@ int main(void) {
             diagnostic_error(message); goto cleanup;
         }
     }
-    checkpoint("[10] Starting authored movement course");
-    player_reset(&player,&movement_test_level);
-    camera_x=0; camera_y=160;
-    checkpoint("Movement test 1 - NOT World 1-1");
+    checkpoint("[10] Loading TERRAIN TEST 1 package");
+    if(load_terrain()) mode=3;
+    checkpoint(status);
+    if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
+    player_reset(&player,active_level());
+    camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
+    checkpoint("TERRAIN TEST 1 - opening slice, approximate physics");
     checkpoint("[11] Course ready; preparing first frame");
     if(!diagnostic_continue()) { exit_code=0; goto cleanup; }
     InputState input={0}; FixedClock clock={0}; Actions actions={0};
@@ -219,13 +283,14 @@ int main(void) {
         hidScanInput(); uint32_t held=hidKeysHeld(), down=hidKeysDown();
         if((held&(KEY_SELECT|KEY_START))==(KEY_SELECT|KEY_START)) break;
         if((down&KEY_SELECT)&&!(held&KEY_START)) {
-            mode=(mode+1)%3;
+            mode=(mode+1)%4;
+            if(mode==3&&!terrain_ready) mode=0;
             input=(InputState){0}; pending=0;
-            if(mode) load_area(mode);
-            else { camera_x=player_camera_x(&player,&movement_test_level,640); camera_y=160; }
+            if(mode==1||mode==2) load_area(mode);
+            else { player_reset(&player,active_level()); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
         }
-        if(!mode&&(down&KEY_TOUCH)) {
-            player_reset(&player,&movement_test_level);
+        if((mode==0||mode==3)&&(down&KEY_TOUCH)) {
+            player_reset(&player,active_level());
             input=(InputState){0}; pending=0;
         }
         circlePosition circle; hidCircleRead(&circle);
@@ -234,9 +299,9 @@ int main(void) {
         for(unsigned i=0;i<steps;i++) {
             actions=input_step(&input,buttons_from_hid(held)|pending,circle.dx,circle.dy,0);
             pending=0;
-            if(!mode) {
-                player_step(&player,&movement_test_level,&actions);
-                camera_x=player_camera_x(&player,&movement_test_level,640); camera_y=160;
+            if(mode==0||mode==3) {
+                player_step(&player,active_level(),&actions);
+                camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
             } else if(!actions.paused) {
                 float speed=actions.run_fire?8:4;
                 camera_x+=actions.move_x*speed; camera_y+=actions.move_y*speed;
@@ -245,16 +310,16 @@ int main(void) {
         }
         if(frames&&frames%15==0) {
             consoleClear();
-            if(!mode) {
-                printf("MOVEMENT TEST 1\nAuthored course - not World 1-1\n\n");
+            if(mode==0||mode==3) {
+                printf("%s\n\n",mode==3?"TERRAIN TEST 1 - World 1-1 opening\nApproximate physics; no enemies":"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
-                printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green finish pole"));
+                printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green section marker"));
             } else {
                 printf("WORLD 1-1 PLACEMENT INSPECTOR\nOutlines only - no player collision\n\n%s\n",status);
                 printf("D-pad: camera   Y: faster\nVisible: %u / %lu\n",shown,(unsigned long)scene.count);
             }
-            printf("\nSELECT: test / area 1 / area 2\nSTART: pause\nSELECT+START: save and exit\n");
+            printf("\nSELECT: test / areas / terrain\nSTART: pause\nSELECT+START: save and exit\n");
             printf("Paused: %d   Dropped: %-8lu\n",input.paused,(unsigned long)clock.discarded_steps);
             printf("Capture: %-4u / %u frames\n",sample_count,SAMPLE_CAPACITY);
             gfxFlushBuffers();
@@ -264,7 +329,7 @@ int main(void) {
             diagnostic_error("ERROR: C3D_FrameBegin failed"); goto cleanup;
         }
         C2D_TargetClear(target,C2D_Color32(12,18,30,255)); C2D_SceneBegin(target);
-        shown=mode?draw_scene():draw_movement();
+        shown=mode==3?draw_terrain():(mode?draw_scene():draw_movement());
         C3D_FrameEnd(0);
         if(!frames) {
             checkpoint("[13] First frame submitted; syncing GPU");
@@ -288,6 +353,8 @@ int main(void) {
     }
 cleanup:
     checkpoint("[17] Releasing graphics resources");
+    if(c3d_ready) C3D_FrameSync();
+    if(terrain_ready) C3D_TexDelete(&terrain_texture);
     if(c2d_ready) C2D_Fini();
     if(c3d_ready) C3D_Fini();
     checkpoint("[18] Returning to launcher");

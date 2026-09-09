@@ -7,7 +7,7 @@ clang --target=wasm32 -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding -nostdli
 node tests/run_movement_tests.mjs tests/movement-tests.wasm
 ```
 
-For native host tests, compile source/core.c, source/movement.c, tests/core_tests.c, tests/movement_tests.c and tests/host_main.c together. These validate the authored movement simulation, not Wii gameplay fidelity. See MOVEMENT_TEST.md for current scope; the historical checks below remain applicable to the placement converter.
+For native host tests, compile source/core.c, source/movement.c, source/terrain.c, tests/core_tests.c, tests/movement_tests.c, tests/terrain_tests.c and tests/host_main.c together. These validate the authored movement simulation, not Wii gameplay fidelity. See MOVEMENT_TEST.md for current scope; the historical checks below remain applicable to the placement converter.
 
 From the project root, with Python 3.10+, Clang built with WebAssembly support, wasm-ld, and Node installed:
 

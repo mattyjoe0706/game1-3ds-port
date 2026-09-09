@@ -72,7 +72,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     report = {"status": "running", "hardware_tested": False, "gameplay_implemented": False,
               "commands": [], "sources": {}, "artifacts": {}}
-    for file in [ROOT / "source/core.c", ROOT / "source/main.c", ROOT / "source/movement.c", ROOT / "include/movement.h", ROOT / "include/core.h", ROOT / "cia.rsf", Path(__file__)]:
+    for file in [ROOT / "source/core.c", ROOT / "source/main.c", ROOT / "source/movement.c", ROOT / "source/terrain.c", ROOT / "include/terrain.h", ROOT / "include/movement.h", ROOT / "include/core.h", ROOT / "cia.rsf", Path(__file__)]:
         report["sources"][str(file.relative_to(ROOT))] = hashlib.sha256(file.read_bytes()).hexdigest()
     if args.cia:
         for name in ("meta/banner.bnr", "tools/verify_cia.py"):
@@ -102,7 +102,7 @@ def main():
              "-march=armv6k", "-mtune=mpcore", "-mfloat-abi=hard", "-mtp=soft", "-mword-relocations", "-D__3DS__",
              "-I" + str(ROOT / "include"), "-I" + str(dkp / "libctru/include")]
     objects = []
-    for name in ("core", "movement", "main"):
+    for name in ("core", "movement", "terrain", "main"):
         obj = out / (name + ".o")
         run([gcc, *flags, "-c", str(ROOT / "source" / (name + ".c")), "-o", str(obj)])
         objects.append(str(obj))
