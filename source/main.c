@@ -11,6 +11,10 @@
 #include "movement.h"
 #include "terrain.h"
 #include "enemies.h"
+#include "character.h"
+static CharacterAnim character;
+static C3D_Tex character_texture;
+static bool character_ready;
 
 static Scene scene;
 static Terrain terrain;
@@ -176,6 +180,38 @@ static unsigned draw_scene(void) {
     }
     return visible;
 }
+static void load_character(void) {
+    uint8_t header[32]; uint32_t hash;
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/mario.nsp","rb");
+    if(!f) { checkpoint("Mario package missing; yellow player fallback"); return; }
+    size_t n=fread(header,1,sizeof(header),f);int extra=fgetc(f),error=ferror(f);fclose(f);
+    if(error||extra!=EOF||!character_header(header,n,&hash)) { checkpoint("Mario header invalid; yellow fallback"); return; }
+    if(!C3D_TexInit(&character_texture,512,256,GPU_RGBA8)) { checkpoint("Mario texture allocation failed; yellow fallback"); return; }
+    f=fopen("sdmc:/3ds/nsmbw-prototype/data/mario.rgba","rb");
+    if(!f) { C3D_TexDelete(&character_texture);checkpoint("Mario texture missing; yellow fallback");return; }
+    n=fread(character_texture.data,1,CHARACTER_TEXTURE_BYTES,f);extra=fgetc(f);error=ferror(f);fclose(f);
+    if(error||extra!=EOF||n!=CHARACTER_TEXTURE_BYTES||terrain_hash(character_texture.data,n)!=hash) {
+        C3D_TexDelete(&character_texture);checkpoint("Mario texture checksum/size invalid; yellow fallback");return;
+    }
+    C3D_TexSetFilter(&character_texture,GPU_NEAREST,GPU_NEAREST);
+    C3D_TexSetWrap(&character_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    C3D_TexFlush(&character_texture);character_ready=true;
+    checkpoint("MARIO SPRITE TEST 1: 21 original-model poses ready");
+}
+static void draw_player(void) {
+    if(player.respawn_ticks) return;
+    if(!character_ready) {
+        clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,16*scale,player.height*scale,C2D_Color32(255,205,80,255));return;
+    }
+    unsigned frame=character_frame(&character);
+    float u=(frame%8)/8.0f,v=1.0f-(frame/8)/4.0f;
+    Tex3DS_SubTexture sub={.width=64,.height=64,.left=u,.top=v,.right=u+1/8.0f,.bottom=v-1/4.0f};
+    if(character.facing<0) { sub.left=u+1/8.0f;sub.right=u; }
+    C2D_Image image={&character_texture,&sub};
+    float height=player.crouched?24.0f:48.0f;
+    C2D_DrawImageAt(image,(player.x+8-24-camera_x)*scale,
+        7.5f+(player.y+player.height-height*(15/16.0f)-camera_y)*scale,0,NULL,48*scale/64,height*scale/64);
+}
 static unsigned draw_movement(void) {
     unsigned visible=0;
     for(unsigned i=0;i<movement_test_level.count;i++) {
@@ -187,10 +223,7 @@ static unsigned draw_movement(void) {
     }
     clipped_rect((movement_test_level.goal_x-camera_x)*scale,7.5f+(320-camera_y)*scale,
                  4,128*scale,C2D_Color32(93,240,120,255));
-    if(!player.respawn_ticks) {
-        clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,
-                     16*scale,player.height*scale,C2D_Color32(255,205,80,255));
-    }
+    draw_player();
     return visible;
 }
 static void draw_enemies(void) {
@@ -226,8 +259,7 @@ static unsigned draw_terrain(void) {
     }
     draw_enemies();
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
-    if(!player.respawn_ticks) clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,
-        16*scale,player.height*scale,C2D_Color32(255,205,80,255));
+    draw_player();
     /* Preserve the 640x360 proportional viewport, including at vertical edges. */
     C2D_DrawRectSolid(0,0,0,400,7.5f,C2D_Color32(12,18,30,255));
     C2D_DrawRectSolid(0,232.5f,0,400,7.5f,C2D_Color32(12,18,30,255));
@@ -240,9 +272,10 @@ static int save_samples(const FixedClock *clock) {
     FILE *f=fopen(path,"wx");
     if(!f) return 0;
     fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
-            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)),clock->clipped_seconds);
+            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)+sizeof(character)),clock->clipped_seconds);
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
     fprintf(f,"# enemy_test=1; enemies_loaded=%u; pause_not_logged\n",enemies_ready?enemies.count:0);
+    fprintf(f,"# mario_sprite_test=1; mario_loaded=%u; mario_texture_bytes=%u\n",character_ready?1u:0u,character_ready?CHARACTER_TEXTURE_BYTES:0u);
     fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode\n");
     for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu\n",i,samples[i].frame_ms,
         samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode);
@@ -307,8 +340,9 @@ int main(void) {
     if(load_terrain()) mode=3;
     checkpoint(status);
     if(terrain_ready) load_enemies();
+    load_character();character_reset(&character);
     if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
-    player_reset(&player,active_level()); enemies_reset(&enemies);
+    player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
     camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
     checkpoint("TERRAIN TEST 1 - opening slice, approximate physics");
     checkpoint("[11] Course ready; preparing first frame");
@@ -326,10 +360,10 @@ int main(void) {
             if(mode==3&&!terrain_ready) mode=0;
             input=(InputState){0}; pending=0;
             if(mode==1||mode==2) load_area(mode);
-            else { player_reset(&player,active_level()); enemies_reset(&enemies); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
+            else { player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
         }
         if((mode==0||mode==3)&&(down&KEY_TOUCH)) {
-            player_reset(&player,active_level()); enemies_reset(&enemies);
+            player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
             input=(InputState){0}; pending=0;
         }
         circlePosition circle; hidCircleRead(&circle);
@@ -341,6 +375,7 @@ int main(void) {
             if(mode==0||mode==3) {
                 if(mode==3&&enemies_ready) encounter_step(&enemies,&player,active_level(),&actions,camera_x);
                 else player_step(&player,active_level(),&actions);
+                character_step(&character,player.vx,player.grounded,player.crouched,actions.paused,player.respawn_ticks!=0);
                 camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
             } else if(!actions.paused) {
                 float speed=actions.run_fire?8:4;
@@ -351,8 +386,9 @@ int main(void) {
         if(frames&&frames%15==0) {
             consoleClear();
             if(mode==0||mode==3) {
-                printf("%s\n\n",mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary characters; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
+                printf("%s\n\n",mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
+                printf("Mario sprite test 1: %s\n",character_ready?"loaded":"yellow fallback");
                 if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green section marker"));
@@ -396,6 +432,7 @@ cleanup:
     checkpoint("[17] Releasing graphics resources");
     if(c3d_ready) C3D_FrameSync();
     if(terrain_ready) C3D_TexDelete(&terrain_texture);
+    if(character_ready) C3D_TexDelete(&character_texture);
     if(c2d_ready) C2D_Fini();
     if(c3d_ready) C3D_Fini();
     checkpoint("[18] Returning to launcher");

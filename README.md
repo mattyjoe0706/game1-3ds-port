@@ -1,5 +1,14 @@
 # NSMBW New 3DS prototype work
 
+**Current source: Mario sprite test 1.** The original model and textures now bake
+into 21 poses for idle, walk, run and airborne display. The native renderer loads
+the optional sprite package, replacing the yellow player while preserving the
+current gameplay. Portable checks pass; native CI and handheld testing are next.
+See [MARIO_SPRITE_TEST.md](MARIO_SPRITE_TEST.md) for installation and limitations,
+and [CHARACTER_CONVERTER.md](CHARACTER_CONVERTER.md) for conversion details.
+The user has since confirmed Enemy test 1 works on the New 3DS XL; the pending
+validation notes below describe earlier milestones.
+
 **Latest source: Enemy test 1.** Four original Goomba placements now connect to
 walking, stomping, contact damage and restart. Tests pass locally; native CI and
 handheld validation remain pending. Characters use temporary visuals and audio

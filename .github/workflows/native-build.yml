@@ -36,7 +36,7 @@ jobs:
         shell: bash
         run: |
           python3 -m unittest discover -s tests -v > ci-logs/python-tests.txt 2>&1
-          cc -std=c11 -O2 -Wall -Wextra -Werror -I include source/core.c source/movement.c source/terrain.c source/enemies.c tests/core_tests.c tests/movement_tests.c tests/terrain_tests.c tests/enemies_tests.c tests/host_main.c -o /tmp/core-tests
+          cc -std=c11 -O2 -Wall -Wextra -Werror -I include source/core.c source/movement.c source/terrain.c source/enemies.c source/character.c tests/character_tests.c tests/core_tests.c tests/movement_tests.c tests/terrain_tests.c tests/enemies_tests.c tests/host_main.c -o /tmp/core-tests
           /tmp/core-tests > ci-logs/core-tests.txt
       - name: Build makerom with the container's host compiler
         shell: bash
