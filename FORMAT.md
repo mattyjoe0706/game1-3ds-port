@@ -54,3 +54,14 @@ file to its level. Missing, trailing, truncated or mismatched data is rejected.
 
 See TERRAIN_TEST.md for current physical approximations and scope. The older
 NSC1 outline format above remains supported independently.
+
+# NSE1 enemy placements (version 1)
+
+`enemies.nse` has a 24-byte header: magic NSE1, then five little-endian u32
+values: version 1, count (0..32), FNV-1a of the complete matching terrain.nst,
+reserved zero, package FNV-1a. The package checksum covers bytes 0..19 followed
+by records, excluding its own bytes 20..23. Each record is four little-endian
+u16 fields: local x, local y, actor ID 20, reserved zero. The 16x16 enemy must
+fit the selected terrain bounds. Unknown actors/settings, trailing bytes, bad
+checksums or wrong terrain bindings are rejected. A checksum is an accidental
+corruption check, not an authenticity signature.

@@ -10,9 +10,14 @@
 #include "core.h"
 #include "movement.h"
 #include "terrain.h"
+#include "enemies.h"
 
 static Scene scene;
 static Terrain terrain;
+static Enemies enemies;
+static uint8_t enemy_bytes[ENEMY_MAX_BYTES];
+static bool enemies_ready;
+static uint32_t terrain_package_hash;
 static uint8_t terrain_bytes[TERRAIN_MAX_BYTES];
 static C3D_Tex terrain_texture;
 static bool terrain_ready;
@@ -111,6 +116,7 @@ static int load_terrain(void) {
     if(error||extra!=EOF||!terrain_decode(&terrain,terrain_bytes,n)) {
         snprintf(status,sizeof(status),"Terrain package invalid or incompatible"); return 0;
     }
+    terrain_package_hash=terrain_hash(terrain_bytes,n);
     if(!C3D_TexInit(&terrain_texture,512,512,GPU_RGBA8)) {
         snprintf(status,sizeof(status),"Terrain texture allocation failed"); return 0;
     }
@@ -132,6 +138,17 @@ static int load_terrain(void) {
     terrain_ready=true;
     snprintf(status,sizeof(status),"Terrain ready: %lu tiles",(unsigned long)terrain.count);
     return 1;
+}
+static void load_enemies(void) {
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/enemies.nse","rb");
+    if(!f) { checkpoint("Enemy data missing; terrain-only mode"); return; }
+    size_t n=fread(enemy_bytes,1,sizeof(enemy_bytes),f);
+    int extra=fgetc(f),error=ferror(f); fclose(f);
+    if(error||extra!=EOF||!enemies_decode(&enemies,enemy_bytes,n,terrain_package_hash,&terrain.level)) {
+        checkpoint("Enemy data invalid/mismatched; terrain-only mode"); return;
+    }
+    enemies_ready=true;
+    checkpoint("ENEMY TEST 1: Goomba placements loaded");
 }
 static float maxf(float a,float b) { return a>b?a:b; }
 static float minf(float a,float b) { return a<b?a:b; }
@@ -176,6 +193,25 @@ static unsigned draw_movement(void) {
     }
     return visible;
 }
+static void draw_enemies(void) {
+    for(unsigned i=0;i<enemies.count;i++) {
+        const Enemy *e=&enemies.items[i];
+        if(e->state!=1&&e->state!=2) continue;
+        float x=(e->body.x-camera_x)*scale,y=7.5f+(e->body.y-camera_y)*scale;
+        if(x+16*scale<0||x>400) continue;
+        uint32_t brown=C2D_Color32(145,80,35,255),dark=C2D_Color32(67,35,20,255);
+        if(e->state==2) { clipped_rect(x,y+12*scale,16*scale,4*scale,brown); continue; }
+        clipped_rect(x+2*scale,y,12*scale,5*scale,brown);
+        clipped_rect(x,y+5*scale,16*scale,7*scale,brown);
+        clipped_rect(x+3*scale,y+11*scale,10*scale,3*scale,C2D_Color32(224,188,128,255));
+        clipped_rect(x,y+14*scale,6*scale,2*scale,dark);
+        clipped_rect(x+10*scale,y+14*scale,6*scale,2*scale,dark);
+        clipped_rect(x+3*scale,y+5*scale,3*scale,4*scale,C2D_Color32(255,255,255,255));
+        clipped_rect(x+10*scale,y+5*scale,3*scale,4*scale,C2D_Color32(255,255,255,255));
+        clipped_rect(x+4*scale,y+6*scale,scale,2*scale,dark);
+        clipped_rect(x+11*scale,y+6*scale,scale,2*scale,dark);
+    }
+}
 static unsigned draw_terrain(void) {
     unsigned visible=0;
     clipped_rect(0,7.5f,400,225,C2D_Color32(91,160,208,255));
@@ -188,6 +224,7 @@ static unsigned draw_terrain(void) {
         C2D_DrawImageAt(image,(t->x-camera_x)*scale,7.5f+(t->y-camera_y)*scale,0,NULL,scale,scale);
         visible++;
     }
+    draw_enemies();
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
     if(!player.respawn_ticks) clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,
         16*scale,player.height*scale,C2D_Color32(255,205,80,255));
@@ -203,8 +240,9 @@ static int save_samples(const FixedClock *clock) {
     FILE *f=fopen(path,"wx");
     if(!f) return 0;
     fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
-            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)),clock->clipped_seconds);
+            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)),clock->clipped_seconds);
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
+    fprintf(f,"# enemy_test=1; enemies_loaded=%u; pause_not_logged\n",enemies_ready?enemies.count:0);
     fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode\n");
     for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu\n",i,samples[i].frame_ms,
         samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode);
@@ -268,8 +306,9 @@ int main(void) {
     checkpoint("[10] Loading TERRAIN TEST 1 package");
     if(load_terrain()) mode=3;
     checkpoint(status);
+    if(terrain_ready) load_enemies();
     if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
-    player_reset(&player,active_level());
+    player_reset(&player,active_level()); enemies_reset(&enemies);
     camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
     checkpoint("TERRAIN TEST 1 - opening slice, approximate physics");
     checkpoint("[11] Course ready; preparing first frame");
@@ -287,10 +326,10 @@ int main(void) {
             if(mode==3&&!terrain_ready) mode=0;
             input=(InputState){0}; pending=0;
             if(mode==1||mode==2) load_area(mode);
-            else { player_reset(&player,active_level()); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
+            else { player_reset(&player,active_level()); enemies_reset(&enemies); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
         }
         if((mode==0||mode==3)&&(down&KEY_TOUCH)) {
-            player_reset(&player,active_level());
+            player_reset(&player,active_level()); enemies_reset(&enemies);
             input=(InputState){0}; pending=0;
         }
         circlePosition circle; hidCircleRead(&circle);
@@ -300,7 +339,8 @@ int main(void) {
             actions=input_step(&input,buttons_from_hid(held)|pending,circle.dx,circle.dy,0);
             pending=0;
             if(mode==0||mode==3) {
-                player_step(&player,active_level(),&actions);
+                if(mode==3&&enemies_ready) encounter_step(&enemies,&player,active_level(),&actions,camera_x);
+                else player_step(&player,active_level(),&actions);
                 camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
             } else if(!actions.paused) {
                 float speed=actions.run_fire?8:4;
@@ -311,8 +351,9 @@ int main(void) {
         if(frames&&frames%15==0) {
             consoleClear();
             if(mode==0||mode==3) {
-                printf("%s\n\n",mode==3?"TERRAIN TEST 1 - World 1-1 opening\nApproximate physics; no enemies":"MOVEMENT TEST 1 - Authored course");
+                printf("%s\n\n",mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary characters; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
+                if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green section marker"));
             } else {

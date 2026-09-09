@@ -22,5 +22,7 @@ extern const MovementLevel movement_test_level;
 void player_reset(Player *p, const MovementLevel *level);
 /* Exactly one 60 Hz step. No allocations; swept axis collision against solids. */
 void player_step(Player *p, const MovementLevel *level, const Actions *a);
+/* Shared kinematic collision integration; caller sets velocity and gravity. */
+void body_move(Player *p,const MovementLevel *level,int was_grounded);
 float player_camera_x(const Player *p, const MovementLevel *level, float view_width);
 #endif

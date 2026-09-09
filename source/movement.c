@@ -44,6 +44,12 @@ void player_step(Player *p,const MovementLevel *l,const Actions *a) {
     if(a->jump_pressed&&p->grounded) { p->vy=-9.4f; p->grounded=0; was_grounded=0; }
     if(!a->jump_held&&p->vy< -3.5f) p->vy=-3.5f;
     p->vy+=0.4f; if(p->vy>10) p->vy=10;
+    body_move(p,l,was_grounded);
+    if(p->y>l->death_y) { p->deaths++; p->respawn_ticks=45; p->vx=p->vy=0; }
+    if(!p->respawn_ticks&&p->grounded&&p->x+16>=l->goal_x) { p->finished=1; p->vx=p->vy=0; }
+}
+
+void body_move(Player *p,const MovementLevel *l,int was_grounded) {
     float nx=p->x+p->vx;
     for(unsigned i=0;i<l->count;i++) {
         const Solid *s=&l->solids[i];
@@ -89,6 +95,4 @@ void player_step(Player *p,const MovementLevel *l,const Actions *a) {
     }
     if(ny!=p->y+p->vy||p->grounded) p->vy=0;
     p->y=ny;
-    if(p->y>l->death_y) { p->deaths++; p->respawn_ticks=45; p->vx=p->vy=0; }
-    if(!p->respawn_ticks&&p->grounded&&p->x+16>=l->goal_x) { p->finished=1; p->vx=p->vy=0; }
 }

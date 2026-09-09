@@ -1,5 +1,11 @@
 # NSMBW New 3DS prototype work
 
+**Latest source: Enemy test 1.** Four original Goomba placements now connect to
+walking, stomping, contact damage and restart. Tests pass locally; native CI and
+handheld validation remain pending. Characters use temporary visuals and audio
+is not implemented. See [ENEMY_TEST.md](ENEMY_TEST.md) for data, controls and the
+character-conversion work still required. Older milestone notes follow.
+
 **Latest source: Terrain test 1.** The player and textured renderer now connect
 to the real opening section of World 1-1. Portable tests pass, including traversal
 of the converted section. Native CI compilation and handheld validation remain
