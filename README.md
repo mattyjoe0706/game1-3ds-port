@@ -1,5 +1,16 @@
 # NSMBW New 3DS prototype work
 
+**Current source: Sprite diagnostic 2.** Both files downloaded from the user's
+SD card match the corrected package, but the rendering problem persists. The
+new source shows the loaded checksum/frame and offers an R-button whole-sheet
+view to isolate the remaining problem. It needs a new native CI build; this is
+diagnostic instrumentation, not a confirmed rendering fix.
+
+**Mario orientation fix:** regenerate the Mario package with the corrected
+top-down texture packing, then replace `mario.nsp` and `mario.rgba` on the card.
+The existing Mario sprite test 1 binary supports these files; no recompilation
+is needed. See [MARIO_SPRITE_TEST.md](MARIO_SPRITE_TEST.md) for evidence and testing.
+
 **Current source: Mario sprite test 1.** The original model and textures now bake
 into 21 poses for idle, walk, run and airborne display. The native renderer loads
 the optional sprite package, replacing the yellow player while preserving the

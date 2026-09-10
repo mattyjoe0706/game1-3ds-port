@@ -15,6 +15,8 @@
 static CharacterAnim character;
 static C3D_Tex character_texture;
 static bool character_ready;
+static uint32_t character_texture_hash;
+static bool character_atlas_view;
 
 static Scene scene;
 static Terrain terrain;
@@ -31,7 +33,7 @@ static uint8_t file_bytes[SCENE_MAX_BYTES];
 static float camera_x, camera_y;
 static const float scale=0.625f; /* 640x360 inspection view -> 400x225 */
 static char status[128];
-typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped, mode; } Sample;
+typedef struct { float frame_ms, cpu_ms, gpu_ms; uint32_t visible, dropped, mode, atlas_view; } Sample;
 #define SAMPLE_CAPACITY 3600
 static Sample samples[SAMPLE_CAPACITY];
 static unsigned sample_count;
@@ -195,8 +197,21 @@ static void load_character(void) {
     }
     C3D_TexSetFilter(&character_texture,GPU_NEAREST,GPU_NEAREST);
     C3D_TexSetWrap(&character_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
-    C3D_TexFlush(&character_texture);character_ready=true;
-    checkpoint("MARIO SPRITE TEST 1: 21 original-model poses ready");
+    C3D_TexFlush(&character_texture);character_ready=true;character_texture_hash=hash;
+    char message[96];
+    snprintf(message,sizeof(message),"SPRITE DIAGNOSTIC 2: loaded texture %08lX",(unsigned long)hash);
+    checkpoint(message);
+}
+static void draw_character_atlas(void) {
+    /* Whole sheet uses fixed UVs, independently of animation-cell selection. */
+    Tex3DS_SubTexture sub={.width=512,.height=256,.left=0,.top=1,.right=1,.bottom=0};
+    C2D_Image image={&character_texture,&sub};
+    C2D_DrawRectSolid(0,0,0,400,240,C2D_Color32(35,45,60,255));
+    C2D_DrawImageAt(image,8,16,0,NULL,0.75f,0.75f);
+    for(unsigned row=0;row<4;row++) for(unsigned col=0;col<8;col++)
+        outline(8+col*48,16+row*48,48,48,C2D_Color32(90,100,110,255));
+    unsigned frame=character_frame(&character);
+    outline(8+(frame%8)*48,16+(frame/8)*48,48,48,C2D_Color32(255,220,0,255));
 }
 static void draw_player(void) {
     if(player.respawn_ticks) return;
@@ -276,9 +291,10 @@ static int save_samples(const FixedClock *clock) {
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
     fprintf(f,"# enemy_test=1; enemies_loaded=%u; pause_not_logged\n",enemies_ready?enemies.count:0);
     fprintf(f,"# mario_sprite_test=1; mario_loaded=%u; mario_texture_bytes=%u\n",character_ready?1u:0u,character_ready?CHARACTER_TEXTURE_BYTES:0u);
-    fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode\n");
-    for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu\n",i,samples[i].frame_ms,
-        samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode);
+    fprintf(f,"# sprite_diagnostic=2; mario_texture_fnv=%08lX\n",(unsigned long)character_texture_hash);
+    fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode,atlas_view\n");
+    for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu,%lu\n",i,samples[i].frame_ms,
+        samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode,(unsigned long)samples[i].atlas_view);
     int failed=ferror(f);
     if(fclose(f)!=0) failed=1;
     return !failed;
@@ -355,8 +371,10 @@ int main(void) {
         double elapsed=(double)(now-last)/(double)SYSCLOCK_ARM11; last=now;
         hidScanInput(); uint32_t held=hidKeysHeld(), down=hidKeysDown();
         if((held&(KEY_SELECT|KEY_START))==(KEY_SELECT|KEY_START)) break;
+        if((down&KEY_R)&&character_ready&&(mode==0||mode==3)) character_atlas_view=!character_atlas_view;
         if((down&KEY_SELECT)&&!(held&KEY_START)) {
             mode=(mode+1)%4;
+            character_atlas_view=false;
             if(mode==3&&!terrain_ready) mode=0;
             input=(InputState){0}; pending=0;
             if(mode==1||mode==2) load_area(mode);
@@ -372,6 +390,7 @@ int main(void) {
         for(unsigned i=0;i<steps;i++) {
             actions=input_step(&input,buttons_from_hid(held)|pending,circle.dx,circle.dy,0);
             pending=0;
+            if(character_atlas_view) actions.paused=1;
             if(mode==0||mode==3) {
                 if(mode==3&&enemies_ready) encounter_step(&enemies,&player,active_level(),&actions,camera_x);
                 else player_step(&player,active_level(),&actions);
@@ -388,7 +407,9 @@ int main(void) {
             if(mode==0||mode==3) {
                 printf("%s\n\n",mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
-                printf("Mario sprite test 1: %s\n",character_ready?"loaded":"yellow fallback");
+                printf("SPRITE DIAGNOSTIC 2: %s\n",character_ready?"loaded":"yellow fallback");
+                printf("Texture: %08lX  Frame: %u\n",(unsigned long)character_texture_hash,character_frame(&character));
+                printf("R: sheet view %s\n",character_atlas_view?"ON (game frozen)":"OFF");
                 if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green section marker"));
@@ -407,6 +428,7 @@ int main(void) {
         }
         C2D_TargetClear(target,C2D_Color32(12,18,30,255)); C2D_SceneBegin(target);
         shown=mode==3?draw_terrain():(mode?draw_scene():draw_movement());
+        if(character_atlas_view) draw_character_atlas();
         C3D_FrameEnd(0);
         if(!frames) {
             checkpoint("[13] First frame submitted; syncing GPU");
@@ -417,7 +439,7 @@ int main(void) {
         }
         /* Timings belong to the viewer; the first frame has no prior timing. */
         if(frames&&sample_count<SAMPLE_CAPACITY) samples[sample_count++]=(Sample){(float)(elapsed*1000),
-            C3D_GetProcessingTime(),C3D_GetDrawingTime(),shown,clock.discarded_steps,mode};
+            C3D_GetProcessingTime(),C3D_GetDrawingTime(),shown,clock.discarded_steps,mode,character_atlas_view?1u:0u};
         frames++;
     }
     checkpoint("[15] Leaving viewer; saving timing CSV");

@@ -6,21 +6,13 @@ from convert_character import convert,Reader
 from inspect_assets import unpack_u8
 from character_texture import textures
 from preview_character import render
-from package_terrain import morton
+from gpu_texture import rgba8_tiles
 from convert_course import fnv1a
 
 FRAMES=[('wait',i*40) for i in range(4)]+[('walk',i*59/8) for i in range(8)]+[('run',i*60/8) for i in range(8)]+[('jumped',5)]
 
 def swizzle(image):
-    width,height=image.size
-    if width%8 or height%8:raise ValueError('Atlas must have whole GPU tiles')
-    data=image.tobytes();out=bytearray(len(data))
-    for y in range(height):
-        gy=height-1-y
-        for x in range(width):
-            dst=((gy//8)*(width//8)*64+(x//8)*64+morton(x&7,gy&7))*4
-            src=(y*width+x)*4;out[dst:dst+4]=data[src:src+4][::-1]
-    return bytes(out)
+    return rgba8_tiles(image.tobytes(),*image.size)
 
 def package(extracted,output):
     extracted,output=Path(extracted).resolve(),Path(output).resolve()
@@ -46,7 +38,7 @@ def package(extracted,output):
     header+=struct.pack('<I',fnv1a(header))
     target=output/'SD-ROOT/3ds/nsmbw-prototype/data';target.mkdir(parents=True)
     (target/'mario.nsp').write_bytes(header);(target/'mario.rgba').write_bytes(raw)
-    report=dict(format='NSP1',version=1,frames=FRAMES,texture_bytes=len(raw),source_sha256=manifest['source_sha256'],
+    report=dict(format='NSP1',version=1,packing_revision=2,frames=FRAMES,texture_bytes=len(raw),source_sha256=manifest['source_sha256'],
                 files={n:hashlib.sha256((target/n).read_bytes()).hexdigest() for n in ('mario.nsp','mario.rgba')},
                 limitations=['Baked 2D poses from original model, simplified base-texture materials.',
                              'Air uses one pose; crouch scales the idle sprite. No facial animation.',
