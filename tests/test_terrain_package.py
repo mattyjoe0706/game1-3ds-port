@@ -29,15 +29,21 @@ class TerrainPackageTests(unittest.TestCase):
             for x in range(1024):
                 off=(y*1024+x)*4
                 texture[off:off+4]=bytes((x%256,y,73,201))
-        atlas=gpu_atlas({0:texture})
+        atlas=gpu_atlas({0:texture,1:texture,2:texture})
         self.assertEqual(len(atlas),1048576)
         # Independently interleave the bits for the GPU address, then undo ABGR.
-        for tile,x,y in [(0,0,0),(0,15,15),(31,7,8),(255,15,15)]:
-            ax=(tile%32)*16+x;ay=511-((tile//32)*16+y)
+        for tile,x,y in [(0,0,0),(0,15,15),(31,7,8),(255,15,15),(256,0,0),(511,15,15),(512,0,0),(767,15,15)]:
+            ax=(tile%32)*16+x;ay=(tile//32)*16+y
             interleave=(ax&1)|((ay&1)<<1)|((ax&2)<<1)|((ay&2)<<2)|((ax&4)<<2)|((ay&4)<<3)
             offset=((ay//8)*4096+(ax//8)*64+interleave)*4
-            sx=(tile%32)*32+4+(x*24+12)//16
-            sy=(tile//32)*32+4+(y*24+12)//16
+            source_tile=tile%256
+            sx=(source_tile%32)*32+4+(x*24+12)//16
+            sy=(source_tile//32)*32+4+(y*24+12)//16
             self.assertEqual(atlas[offset:offset+4][::-1],bytes((sx%256,sy,73,201)))
+        self.assertEqual(atlas[384*512*4:],bytes(128*512*4))
+
+    def test_bad_texture_inputs(self):
+        with self.assertRaises(ValueError):gpu_atlas({3:bytes(1024*256*4)})
+        with self.assertRaises(ValueError):gpu_atlas({0:bytes(4)})
 
 if __name__=='__main__':unittest.main()

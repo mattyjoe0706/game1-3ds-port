@@ -14,7 +14,8 @@ def package(output):
                                 ("tests",{'.c','.py','.mjs','.md'}),("meta",{'.bnr','.png','.wav','.md','.txt'}),
                                 (".github/workflows",{'.yml'})):
         allowed.extend(p for p in (ROOT/dirname).rglob('*') if p.is_file() and p.suffix in extensions and not p.is_symlink())
-    allowed.extend(ROOT/name for name in ('README.md','STATUS.md','FORMAT.md','BUILD_HOST.md','LAUNCH_STATUS.md','STARTUP_DIAGNOSTICS.md','MOVEMENT_TEST.md','TERRAIN_DECODER.md','TERRAIN_TEST.md','ENEMY_TEST.md','CHARACTER_CONVERTER.md','MARIO_SPRITE_TEST.md','Makefile','cia.rsf','.gitignore'))
+    allowed.extend(ROOT/name for name in ('README.md','STATUS.md','FORMAT.md','BUILD_HOST.md','LAUNCH_STATUS.md','STARTUP_DIAGNOSTICS.md','MOVEMENT_TEST.md','TERRAIN_DECODER.md','TERRAIN_TEST.md','ENEMY_TEST.md','CHARACTER_CONVERTER.md','MARIO_SPRITE_TEST.md','OPENING_FIDELITY.md','Makefile','cia.rsf','.gitignore'))
+    allowed.append(ROOT/'ROLLING_HILL.md')
     manifest={}
     for p in allowed:
         if not p.is_file(): raise ValueError(f'Missing source file: {p}')

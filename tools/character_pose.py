@@ -55,7 +55,7 @@ def mesh(model,matrices,attachment=IDENTITY):
         material,shape_id,node_id,priority=cmd['args'];shape=model['shapes'][shape_id]
         ids=shape['attribute_buffer_ids'];positions=model['position_buffers'][ids[0]]['values']
         uv=model['attribute_buffers']['uv'][ids[4]]['values']
-        colors=model['attribute_buffers']['color'][ids[2]]['values']
+        colors=model['attribute_buffers']['color'][ids[2]]['values'] if ids[2]>=0 else None
         for draw in shape['draws']:
             palette={l['address']//12:l['index'] for l in draw['matrix_loads'] if l['command']==0x20 and l['words']==12 and l['address']%12==0}
             for tri in shape['triangles'][draw['first_triangle']:draw['first_triangle']+draw['triangle_count']]:
@@ -66,5 +66,6 @@ def mesh(model,matrices,attachment=IDENTITY):
                         if v['0']%3:raise ValueError('Unaligned position matrix index')
                         mid=palette[v['0']//3]
                     transform=multiply(attachment,matrices[mid])
-                    corners.append(dict(position=point(transform,positions[v['9']]),uv=uv[v['13']],color=colors[v['11']]))
+                    corners.append(dict(position=point(transform,positions[v['9']]),uv=uv[v['13']],
+                                        color=colors[v['11']] if colors is not None else [255,255,255,255]))
                 yield material,corners

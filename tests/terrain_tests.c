@@ -15,6 +15,13 @@ float terrain_player_y(void) { return player.y; }
 unsigned terrain_player_deaths(void) { return player.deaths; }
 int terrain_player_finished(void) { return player.finished; }
 int terrain_player_grounded(void) { return player.grounded; }
+int terrain_test_hill(unsigned n,unsigned package_hash,unsigned texture_hash) {
+    return terrain_hill_decode(&terrain,bytes,n,package_hash,texture_hash);
+}
+unsigned terrain_test_surfaces(void) { return terrain.level.surface_count; }
+void terrain_test_position(float x,float y) {
+    player_reset(&player,&terrain.level); player.x=x;player.y=y;
+}
 void terrain_tick(int direction,int jump) {
     Actions a={0}; a.move_x=direction; a.run_fire=1; a.jump_held=jump;
     a.jump_pressed=jump&&player.grounded;
@@ -64,5 +71,27 @@ int run_terrain_tests(void) {
     for(int i=0;i<80;i++) player_step(&p,&one_way,&a);
     CHECK(p.grounded&&p.y==64); /* Land from above. */
     a.paused=1;float y=p.y;player_step(&p,&one_way,&a);CHECK(p.y==y);
+    /* Synthetic continuous cap: asset-free CI coverage of optional loader. */
+    terrain.level.width=1408;terrain.level.death_y=384;
+    for(unsigned i=0;i<HILL_MAX_BYTES;i++) bytes[i]=0;
+    put32(0,0x3148534e);put32(4,1);put32(8,123);put32(12,456);
+    put32(16,568);put32(20,160);put32(24,160);
+    for(unsigned i=0;i<160;i++) {
+        union { float value; uint32_t bits; } f;
+        f.value=648+4*i;put32(32+16*i,f.bits);
+        f.value=4;put32(36+16*i,f.bits);
+        f.value=160;put32(40+16*i,f.bits);put32(44+16*i,f.bits);
+    }
+    uint32_t h=2166136261u;
+    for(unsigned i=0;i<HILL_MAX_BYTES;i++) if(i<28||i>=32) h=(h^bytes[i])*16777619u;
+    put32(28,h);
+    for(unsigned i=0;i<50;i++) {
+        CHECK(terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+        CHECK(terrain.level.surface_count==terrain.base_surface_count+160);
+    }
+    CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,124,456));
+    CHECK(terrain.level.surface_count==terrain.base_surface_count);
+    CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES-1,123,456));
+    bytes[40]^=1;CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
     return 0;
 }

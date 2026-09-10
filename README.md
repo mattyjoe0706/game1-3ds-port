@@ -1,5 +1,19 @@
 # NSMBW New 3DS prototype work
 
+**Current source: HILL TEST 1.** The opening Rolling Hill (actor 212) now has
+its original circular model/texture baked for the 3DS and curved support for
+Mario and enemies. This changes native code: a new CI build is required.
+The speed-zero opening instance is stationary; other rolling hills remain
+unsupported. See [ROLLING_HILL.md](ROLLING_HILL.md) for evidence and limitations.
+Mario's upright/visible rendering and the previous 55-second performance run
+are already accepted; older diagnostic notes below are historical.
+
+**Current data: World 1-1 terrain visual correction.** All 43 opening tile images
+now match sampled original textures; 323 terrain placements and four Goomba
+positions match decoded source data. Gameplay/camera fidelity remains incomplete.
+See [OPENING_FIDELITY.md](OPENING_FIDELITY.md). The full local package works with
+the existing diagnostic-2 application, so this correction needs no new CI build.
+
 **Current source: Sprite diagnostic 2.** Both files downloaded from the user's
 SD card match the corrected package, but the rendering problem persists. The
 new source shows the loaded checksum/frame and offers an R-button whole-sheet

@@ -27,6 +27,9 @@ static uint32_t terrain_package_hash;
 static uint8_t terrain_bytes[TERRAIN_MAX_BYTES];
 static C3D_Tex terrain_texture;
 static bool terrain_ready;
+static C3D_Tex hill_texture;
+static bool hill_ready;
+static uint8_t hill_bytes[HILL_MAX_BYTES];
 
 
 static uint8_t file_bytes[SCENE_MAX_BYTES];
@@ -144,6 +147,26 @@ static int load_terrain(void) {
     terrain_ready=true;
     snprintf(status,sizeof(status),"Terrain ready: %lu tiles",(unsigned long)terrain.count);
     return 1;
+}
+static void load_hill(void) {
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/hill.nsh","rb");
+    if(!f) { checkpoint("Hill missing; static tiles only"); return; }
+    size_t n=fread(hill_bytes,1,sizeof(hill_bytes),f);
+    int extra=fgetc(f),error=ferror(f); fclose(f);
+    if(error||extra!=EOF||n!=HILL_MAX_BYTES) { checkpoint("Hill package size invalid"); return; }
+    if(!C3D_TexInit(&hill_texture,512,512,GPU_RGBA8)) { checkpoint("Hill texture allocation failed"); return; }
+    f=fopen("sdmc:/3ds/nsmbw-prototype/data/hill.rgba","rb");
+    if(!f) { C3D_TexDelete(&hill_texture); checkpoint("Hill texture missing"); return; }
+    size_t texture_n=fread(hill_texture.data,1,TERRAIN_TEXTURE_BYTES,f);
+    extra=fgetc(f); error=ferror(f); fclose(f);
+    if(error||extra!=EOF||texture_n!=TERRAIN_TEXTURE_BYTES||
+       !terrain_hill_decode(&terrain,hill_bytes,n,terrain_package_hash,terrain_hash(hill_texture.data,texture_n))) {
+        C3D_TexDelete(&hill_texture); checkpoint("Hill invalid or mismatched; static tiles only"); return;
+    }
+    C3D_TexSetFilter(&hill_texture,GPU_LINEAR,GPU_LINEAR);
+    C3D_TexSetWrap(&hill_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    C3D_TexFlush(&hill_texture); hill_ready=true;
+    checkpoint("HILL TEST 1: opening circle and support loaded");
 }
 static void load_enemies(void) {
     FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/enemies.nse","rb");
@@ -272,6 +295,14 @@ static unsigned draw_terrain(void) {
         C2D_DrawImageAt(image,(t->x-camera_x)*scale,7.5f+(t->y-camera_y)*scale,0,NULL,scale,scale);
         visible++;
     }
+    /* The actor covers the valley tiles; drawing underneath exposes buried grass. */
+    if(hill_ready&&568+800>camera_x&&568<camera_x+640) {
+        Tex3DS_SubTexture sub={.width=512,.height=512,.left=0,.top=1,.right=1,.bottom=0};
+        C2D_Image image={&hill_texture,&sub};
+        C2D_DrawImageAt(image,(568-camera_x)*scale,7.5f+(160-camera_y)*scale,0,NULL,
+                        800.0f/512*scale,800.0f/512*scale);
+        visible++;
+    }
     draw_enemies();
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
     draw_player();
@@ -287,8 +318,10 @@ static int save_samples(const FixedClock *clock) {
     FILE *f=fopen(path,"wx");
     if(!f) return 0;
     fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
-            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)+sizeof(character)),clock->clipped_seconds);
+            (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)+sizeof(character)+sizeof(hill_bytes)),clock->clipped_seconds);
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
+    fprintf(f,"# hill_test=1; hill_loaded=%u; hill_texture_bytes=%u; hill_hash=%08lx\n",
+            (unsigned)hill_ready,(unsigned)(hill_ready?TERRAIN_TEXTURE_BYTES:0),(unsigned long)terrain.hill_texture_hash);
     fprintf(f,"# enemy_test=1; enemies_loaded=%u; pause_not_logged\n",enemies_ready?enemies.count:0);
     fprintf(f,"# mario_sprite_test=1; mario_loaded=%u; mario_texture_bytes=%u\n",character_ready?1u:0u,character_ready?CHARACTER_TEXTURE_BYTES:0u);
     fprintf(f,"# sprite_diagnostic=2; mario_texture_fnv=%08lX\n",(unsigned long)character_texture_hash);
@@ -355,7 +388,7 @@ int main(void) {
     checkpoint("[10] Loading TERRAIN TEST 1 package");
     if(load_terrain()) mode=3;
     checkpoint(status);
-    if(terrain_ready) load_enemies();
+    if(terrain_ready) { load_hill(); load_enemies(); }
     load_character();character_reset(&character);
     if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
     player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
@@ -417,7 +450,8 @@ int main(void) {
                 printf("WORLD 1-1 PLACEMENT INSPECTOR\nOutlines only - no player collision\n\n%s\n",status);
                 printf("D-pad: camera   Y: faster\nVisible: %u / %lu\n",shown,(unsigned long)scene.count);
             }
-            printf("\nSELECT: test / areas / terrain\nSTART: pause\nSELECT+START: save and exit\n");
+            printf("\nHILL TEST 1: %s\n",hill_ready?"loaded":"missing / invalid");
+            printf("SELECT: test / areas / terrain\nSTART: pause\nSELECT+START: save and exit\n");
             printf("Paused: %d   Dropped: %-8lu\n",input.paused,(unsigned long)clock.discarded_steps);
             printf("Capture: %-4u / %u frames\n",sample_count,SAMPLE_CAPACITY);
             gfxFlushBuffers();
@@ -454,6 +488,7 @@ cleanup:
     checkpoint("[17] Releasing graphics resources");
     if(c3d_ready) C3D_FrameSync();
     if(terrain_ready) C3D_TexDelete(&terrain_texture);
+    if(hill_ready) C3D_TexDelete(&hill_texture);
     if(character_ready) C3D_TexDelete(&character_texture);
     if(c2d_ready) C2D_Fini();
     if(c3d_ready) C3D_Fini();

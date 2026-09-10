@@ -13,7 +13,12 @@ int encounter_load(unsigned tn,unsigned en) {
     player_reset(&player,&terrain.level);return 1;
 }
 unsigned encounter_count(void) { return enemies.count; }
+int encounter_attach_hill(unsigned n,unsigned th,unsigned ih) {
+    return terrain_hill_decode(&terrain,terrain_bytes,n,th,ih);
+}
 unsigned encounter_deaths(void) { return player.deaths; }
+float encounter_x(void) { return player.x; }
+float encounter_y(void) { return player.y; }
 unsigned encounter_stomps(void) { return enemies.stomps; }
 int encounter_finished(void) { return player.finished; }
 void encounter_tick(int move,int jump) {

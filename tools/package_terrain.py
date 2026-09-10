@@ -7,6 +7,7 @@ import struct
 from convert_tiles import convert, lz11, rgb5a3
 from convert_course import fnv1a
 from inspect_assets import unpack_u8
+from gpu_texture import rgba8_tiles
 
 SLOPES={0:(16,0),1:(0,16),2:(16,8),3:(8,0),4:(0,8),5:(8,16),
         11:(16,12),12:(12,8),13:(8,4),14:(4,0),15:(0,4),16:(4,8),17:(8,12),18:(12,16)}
@@ -17,6 +18,7 @@ def morton(x,y):
 def gpu_atlas(textures):
     result=bytearray(512*512*4)
     for slot,texture in textures.items():
+        if slot not in (0,1,2) or len(texture)!=1024*256*4:raise ValueError('Invalid terrain tileset slot or dimensions')
         for tile in range(256):
             tile_id=slot*256+tile
             for y in range(16):
@@ -26,10 +28,10 @@ def gpu_atlas(textures):
                     sy=(tile//32)*32+4+(y*24+12)//16
                     src=(sy*1024+sx)*4
                     ax=(tile_id%32)*16+x
-                    ay=511-((tile_id//32)*16+y)
-                    dst=((ay//8)*64*64+(ax//8)*64+morton(ax&7,ay&7))*4
-                    result[dst:dst+4]=texture[src:src+4][::-1] # GPU RGBA8 byte order: ABGR
-    return bytes(result)
+                    ay=(tile_id//32)*16+y
+                    dst=(ay*512+ax)*4
+                    result[dst:dst+4]=texture[src:src+4]
+    return rgba8_tiles(result,512,512)
 
 def encode(records,texture_hash):
     payload=bytearray()
@@ -84,13 +86,14 @@ def package(extracted,output):
     target.mkdir(parents=True)
     (target/'terrain.nst').write_bytes(data)
     (target/'terrain.rgba').write_bytes(atlas)
-    report={'format':'NST1','version':1,'native_build':'TERRAIN TEST 1',
+    report={'format':'NST1','version':1,'packing_revision':2,'native_build':'TERRAIN TEST 1',
             'world_bounds':[496,384,1408,320],'tiles':(len(data)-36)//12,
             'omitted_marker_tiles':omitted,'texture_bytes':len(atlas),
             'files':{n:hashlib.sha256((target/n).read_bytes()).hexdigest() for n in ('terrain.nst','terrain.rgba')},
             'limitations':['Opening section only; approximate player physics.',
                            'Static textures; coins decorative; blocks do not release items.',
-                           'No enemies, Mario graphics, background scenes or audio.',
+                           'Enemy data must be regenerated against the updated terrain checksum.',
+                           'Background scenes and audio are absent; companion packages provide Mario/enemies.',
                            'Unvalidated on hardware; does not establish 60 fps acceptance.']}
     (output/'package-manifest.json').write_text(json.dumps(report,indent=2)+'\n')
     return report
