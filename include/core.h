@@ -30,14 +30,14 @@ enum {
 };
 typedef struct {
     uint32_t previous;
-    int carrying, paused;
+    int carrying, paused, pickup_used;
 } InputState;
 typedef struct {
     int move_x, move_y, jump_pressed, jump_held, run_fire;
     int pickup, throw_object, carry_held, spin, tilt, paused;
 } Actions;
-/* Call at 60 Hz. Eligibility comes from the future actor/collision system.
- * X pickup is edge-triggered; an unsuccessful press must be released to retry.
+/* Call at 60 Hz. Eligibility comes from the actor/collision system.
+ * Holding X picks up when eligible, at most once per uninterrupted hold.
  * Object destruction/death must clear state.carrying in the caller.
  */
 Actions input_step(InputState *state, uint32_t buttons, int pad_x, int pad_y, int can_pickup);

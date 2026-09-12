@@ -46,8 +46,11 @@ Actions input_step(InputState *s, uint32_t b, int px, int py, int can_pickup) {
     a.jump_held=!!(b&(BTN_A|BTN_B)); a.run_fire=!!(b&BTN_Y);
     a.spin=!!(pressed&BTN_R);
     a.tilt=!!(b&BTN_ZR)-!!(b&(BTN_L|BTN_ZL));
+    if (!(b&BTN_X)) s->pickup_used=0;
     if (s->carrying && !(b&BTN_X)) { a.throw_object=1; s->carrying=0; }
-    else if (!s->carrying && (pressed&BTN_X) && can_pickup) { a.pickup=1; s->carrying=1; }
+    else if (!s->carrying && (b&BTN_X) && !s->pickup_used && can_pickup) {
+        a.pickup=1; s->carrying=1; s->pickup_used=1;
+    }
     a.carry_held=s->carrying;
     return a;
 }

@@ -124,6 +124,37 @@ static int run_shell_tests(void) {
     }
     return 0;
 }
+static int run_held_approach_tests(void) {
+    /* Real input/movement loop: press X out of range and approach from either side. */
+    for(int direction=-1;direction<=1;direction+=2) for(int run=0;run<2;run++)
+    for(int offset=0;offset<8;offset++) {
+        Enemies e;Player p;InputState input={0};Actions a;
+        enemies_test_scene(&e);e.count=1;
+        e.items[0].state=ENEMY_SHELL_IDLE;e.items[0].timer=511;
+        e.items[0].body.x=300;
+        player_reset(&p,&shell_test_level);p.x=300-direction*(80+offset*0.5f);
+        uint32_t buttons=BTN_X|(direction>0?BTN_RIGHT:BTN_LEFT)|(run?BTN_Y:0);
+        for(int tick=0;tick<100&&!enemies_carrying(&e);tick++) {
+            input.carrying=enemies_carrying(&e);
+            a=input_step(&input,buttons,0,0,enemies_can_pickup(&e,&p));
+            encounter_step(&e,&p,&shell_test_level,&a,0);
+            CHECK(e.items[0].state!=ENEMY_SHELL_MOVING&&!p.respawn_ticks);
+        }
+        CHECK(enemies_carrying(&e));
+        for(int tick=0;tick<30;tick++) {
+            input.carrying=enemies_carrying(&e);
+            a=input_step(&input,BTN_X,0,0,enemies_can_pickup(&e,&p));
+            encounter_step(&e,&p,&shell_test_level,&a,0);
+            CHECK(enemies_carrying(&e)&&!a.pickup&&!a.throw_object);
+        }
+        a=input_step(&input,0,0,0,0);
+        encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(a.throw_object&&e.items[0].state==ENEMY_SHELL_MOVING);
+        CHECK(e.items[0].direction==direction&&!p.respawn_ticks);
+    }
+    return 0;
+}
 int run_enemies_tests(void) {
-    int r=run_goomba_tests();return r?r:run_shell_tests();
+    int r=run_goomba_tests();if(r)return r;
+    r=run_shell_tests();return r?r:run_held_approach_tests();
 }

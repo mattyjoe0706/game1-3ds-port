@@ -16,7 +16,9 @@ int run_core_tests(void) {
     a=input_step(&s,0,0,0,1); CHECK(a.throw_object&&!a.carry_held);
     a=input_step(&s,0,0,0,1); CHECK(!a.throw_object);
     a=input_step(&s,BTN_X,0,0,0); CHECK(!a.pickup);
-    a=input_step(&s,BTN_X,0,0,1); CHECK(!a.pickup); /* no auto-pickup on a held failed press */
+    a=input_step(&s,BTN_X,0,0,1); CHECK(a.pickup&&a.carry_held); /* approach while holding X */
+    s.carrying=0; /* Wall drop/destruction must not cause repeated pickup. */
+    a=input_step(&s,BTN_X,0,0,1); CHECK(!a.pickup&&!a.throw_object);
     input_step(&s,0,0,0,1);
     a=input_step(&s,BTN_X,0,0,1); CHECK(a.pickup);
     a=input_step(&s,BTN_X|BTN_START,0,0,1); CHECK(a.paused&&!a.pickup&&!a.throw_object);
