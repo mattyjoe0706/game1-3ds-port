@@ -69,10 +69,31 @@ blocks and power-ups; entrances, checkpoints and exits; camera/framing, Mario
 scale, backgrounds and layering; and the goal/completion sequence. Check audio,
 effects and remapped actions where implemented or required by the level.
 
+### Final graphics-quality gate
+
+Run this after gameplay behavior is stable and immediately before packaging the
+level. Compare matching screenshots or video frames against the original Wii
+level and a representative New Super Mario Bros. 3DS reference when judging
+presentation quality. Check Mario's proportions, model or sprite detail, eyes,
+hat/hair visibility, power-up costumes and transition frames; terrain silhouette,
+rolling hills, surface textures and seams; enemy and collectible appearance;
+background art, sky, distant layers and parallax; camera framing, letterboxing,
+palette, transparency, filtering, lighting and effects. Look for missing detail,
+flat placeholder geometry, texture stretching, visible intersections, harsh
+pixelation and incorrect layering. Record each item as matched, intentionally
+simplified or open, with a screenshot or location reference. Improve the visual
+assets and rerender before packaging whenever an item is open without an agreed
+simplification. This is a presentation gate in addition to collision and
+placement checks; passing gameplay alone does not pass graphics quality.
+
 Reconcile the final instance counts with the source inventory. Revisit every
 deferred issue. Fix discrepancies and recheck the affected behavior. Any unresolved
 required behavior, unavailable reference or untested section remains explicitly
 open; the level must not be described as complete or faithful while it remains.
+
+Do not package until the graphics-quality gate is recorded as complete. The final
+review entry must include the visual reference used, locations compared, known
+simplifications and the final screenshots or capture IDs.
 
 ## 5. Final handheld acceptance
 
