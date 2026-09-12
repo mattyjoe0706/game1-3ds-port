@@ -265,9 +265,9 @@ def convert(extracted,output):
         summaries.append(dict(name=name,duration=clip['duration'],nodes=len(clip['nodes'])))
     report=dict(format='character-intermediate',version=3,native_ready=False,source_sha256=hashes,
                 models={n:dict(bones=len(m['bones']),positions=sum(len(b['values']) for b in m['position_buffers']),shapes=len(m['shapes']),triangles=sum(len(s['triangles']) for s in m['shapes'])) for n,m in models.items()},
-                animations=summaries,limitations=['Triangle topology decoded; matrix references retained but skin weights not resolved.',
+                animations=summaries,limitations=['Triangle topology and skin weights decoded; character_pose.py evaluates rigid and weighted matrices.',
                 'Base material samplers and attribute arrays decoded; full Wii material effects are not reproduced.',
-                'General scale compensation and blended skinning remain unsupported; selected rigid poses use character_pose.py.',
+                'General parent scale compensation remains unsupported; rigid and weighted poses use character_pose.py.',
                 'This intermediate format is not loaded on 3DS; package_character.py produces an optional baked sprite atlas.'])
     output.mkdir(parents=True)
     (output/'models.json').write_text(json.dumps(models,separators=(',',':'))+'\n')

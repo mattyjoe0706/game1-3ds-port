@@ -8,10 +8,13 @@ from inspect_assets import unpack_u8
 from character_texture import textures
 from character_pose import pose,mesh
 
-def render(models,clips,tex,clip='wait',frame=0,size=256):
-    body=models['MB_model'];head=models['MH_model'];matrices=pose(body,clips[clip],frame)
-    attach=matrices[next(b['matrix_id'] for b in body['bones'] if b['name']=='face_1')]
-    objects=[(body,mesh(body,matrices)),(head,mesh(head,pose(head),attach))]
+def render(models,clips,tex,clip='wait',frame=0,size=256,solo=False,player_form='super'):
+    body=models['MB_model'];matrices=pose(body,clips.get(clip) if solo else clips[clip],frame,player_form=None if solo else player_form)
+    objects=[(body,mesh(body,matrices))]
+    if not solo:
+        head=models['MH_model']
+        attach=matrices[next(b['matrix_id'] for b in body['bones'] if b['name']=='face_1')]
+        objects.append((head,mesh(head,pose(head),attach,wearing_cap=True)))
     image=np.zeros((size,size,4),dtype=np.uint8);depth=np.full((size,size),-np.inf)
     # Three-quarter orthographic view: forward +Z projects right.
     angle=math.radians(65);ca,sa=math.cos(angle),math.sin(angle);scale=size/48
@@ -20,7 +23,7 @@ def render(models,clips,tex,clip='wait',frame=0,size=256):
             sampler=next(s for s in model['materials'][material]['samplers'] if s['slot']==0)
             tw,th,rgba=tex[sampler['texture']];texture=np.frombuffer(rgba,dtype=np.uint8).reshape(th,tw,4)
             points=np.array([v['position'] for v in tri]);px=points[:,0]*ca+points[:,2]*sa;pz=-points[:,0]*sa+points[:,2]*ca
-            projected=np.stack((size/2+px*scale,size*15/16-points[:,1]*scale),axis=1)
+            projected=np.stack((size/2+px*scale,size*(0.65 if solo else 15/16)-points[:,1]*scale),axis=1)
             a,b,c=projected;den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1])
             if abs(den)<1e-8:continue
             lo=np.maximum(np.floor(projected.min(axis=0)).astype(int),0);hi=np.minimum(np.ceil(projected.max(axis=0)).astype(int),size-1)

@@ -102,7 +102,9 @@ def main():
              "-march=armv6k", "-mtune=mpcore", "-mfloat-abi=hard", "-mtp=soft", "-mword-relocations", "-D__3DS__",
              "-I" + str(ROOT / "include"), "-I" + str(dkp / "libctru/include")]
     objects = []
-    for name in ("core", "movement", "terrain", "enemies", "character", "main"):
+    for name in ("source/items.c","include/items.h"):
+        report["sources"][name]=hashlib.sha256((ROOT/name).read_bytes()).hexdigest()
+    for name in ("core", "movement", "terrain", "enemies", "character", "items", "main"):
         obj = out / (name + ".o")
         run([gcc, *flags, "-c", str(ROOT / "source" / (name + ".c")), "-o", str(obj)])
         objects.append(str(obj))

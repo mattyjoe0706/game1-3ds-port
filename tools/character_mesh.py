@@ -57,4 +57,17 @@ def material(r,off,end):
         p=off+relative+i*0x34;tex,palette=r.read('II',p)
         samplers.append(dict(texture=r.name(p+tex),palette=r.name(p+palette) if palette else None,
                              slot=r.read('I',p+16),wrap=r.read('II',p+24),filters=r.read('II',p+32)))
+    # MDL0 v11 material header ends at 0x3c. The following fixed table
+    # contains the per-slot texture SRT; eye materials use scale S=2.
+    header=off+0x3c
+    if header+0x214>end:raise ValueError('Truncated material texture transform table')
+    srt_flags,mode=r.read('II',header+0x16c)
+    for sampler in samplers:
+        slot=sampler['slot']
+        if slot>=8:raise ValueError('Invalid texture slot')
+        flags=(srt_flags>>(slot*4))&15
+        sx,sy,rotation,tx,ty=r.read('5f',header+0x174+slot*0x14)
+        sampler['srt']=dict(mode=mode,scale=[1,1] if flags&2 else [sx,sy],
+                            rotation=0 if flags&4 else rotation,
+                            translation=[0,0] if flags&8 else [tx,ty])
     return dict(id=r.read('I',off+12),flags=r.read('I',off+16),cull=r.read('I',off+24),samplers=samplers)

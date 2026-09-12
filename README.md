@@ -1,5 +1,17 @@
 # NSMBW New 3DS prototype work
 
+**Current source: ITEM TEST 1.** Original opening block contents are decoded,
+coins and blocks are interactive, and the Propeller Mushroom can be collected
+from Small/Super/Propeller states. R boosts and Down accelerates descent.
+Pickup graphics use original models; Mario's full Propeller suit rendering is
+still blocked by unsupported blended skinning. See [ITEM_TEST.md](ITEM_TEST.md).
+This source requires a new native CI build and hardware validation.
+
+**Required workflow for every level:** follow [LEVEL_VALIDATION.md](LEVEL_VALIDATION.md).
+Inventory special and repeated objects, track deferred differences, and always
+perform a final comparison with the actual Wii level before completion. Remaining
+World 1-1 hill behavior/instances are deferred to that final pass by user request.
+
 **Current source: HILL TEST 1.** The opening Rolling Hill (actor 212) now has
 its original circular model/texture baked for the 3DS and curved support for
 Mario and enemies. This changes native code: a new CI build is required.

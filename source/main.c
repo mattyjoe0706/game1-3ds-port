@@ -12,8 +12,18 @@
 #include "terrain.h"
 #include "enemies.h"
 #include "character.h"
+#include "items.h"
+static Items items;
+static bool items_ready;
+static uint8_t item_bytes[ITEM_MAX_BYTES];
+static C3D_Tex item_texture;
+static bool item_texture_ready;
+#define ITEM_TEXTURE_BYTES (128*64*4)
 static CharacterAnim character;
 static C3D_Tex character_texture;
+static C3D_Tex form_textures[2];
+static bool form_ready[2];
+static uint32_t form_hash[2];
 static bool character_ready;
 static uint32_t character_texture_hash;
 static bool character_atlas_view;
@@ -205,25 +215,48 @@ static unsigned draw_scene(void) {
     }
     return visible;
 }
-static void load_character(void) {
-    uint8_t header[32]; uint32_t hash;
-    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/mario.nsp","rb");
-    if(!f) { checkpoint("Mario package missing; yellow player fallback"); return; }
+static bool load_character_texture(C3D_Tex *texture,uint32_t *texture_hash,const char *stem) {
+    uint8_t header[32];uint32_t hash;char path[160],message[192];
+    snprintf(path,sizeof(path),"sdmc:/3ds/nsmbw-prototype/data/%s.nsp",stem);
+    FILE *f=fopen(path,"rb");
+    if(!f) { snprintf(message,sizeof(message),"%s header missing; fallback",stem);checkpoint(message);return false; }
     size_t n=fread(header,1,sizeof(header),f);int extra=fgetc(f),error=ferror(f);fclose(f);
-    if(error||extra!=EOF||!character_header(header,n,&hash)) { checkpoint("Mario header invalid; yellow fallback"); return; }
-    if(!C3D_TexInit(&character_texture,512,256,GPU_RGBA8)) { checkpoint("Mario texture allocation failed; yellow fallback"); return; }
-    f=fopen("sdmc:/3ds/nsmbw-prototype/data/mario.rgba","rb");
-    if(!f) { C3D_TexDelete(&character_texture);checkpoint("Mario texture missing; yellow fallback");return; }
-    n=fread(character_texture.data,1,CHARACTER_TEXTURE_BYTES,f);extra=fgetc(f);error=ferror(f);fclose(f);
-    if(error||extra!=EOF||n!=CHARACTER_TEXTURE_BYTES||terrain_hash(character_texture.data,n)!=hash) {
-        C3D_TexDelete(&character_texture);checkpoint("Mario texture checksum/size invalid; yellow fallback");return;
+    if(error||extra!=EOF||!character_header(header,n,&hash)) {checkpoint("Mario form header invalid; fallback");return false;}
+    if(!C3D_TexInit(texture,512,256,GPU_RGBA8)) {checkpoint("Mario form allocation failed; fallback");return false;}
+    snprintf(path,sizeof(path),"sdmc:/3ds/nsmbw-prototype/data/%s.rgba",stem);f=fopen(path,"rb");
+    if(!f) {C3D_TexDelete(texture);checkpoint("Mario form texture missing; fallback");return false;}
+    n=fread(texture->data,1,CHARACTER_TEXTURE_BYTES,f);extra=fgetc(f);error=ferror(f);fclose(f);
+    if(error||extra!=EOF||n!=CHARACTER_TEXTURE_BYTES||terrain_hash(texture->data,n)!=hash) {
+        C3D_TexDelete(texture);checkpoint("Mario form checksum/size invalid; fallback");return false;
     }
-    C3D_TexSetFilter(&character_texture,GPU_NEAREST,GPU_NEAREST);
-    C3D_TexSetWrap(&character_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
-    C3D_TexFlush(&character_texture);character_ready=true;character_texture_hash=hash;
-    char message[96];
-    snprintf(message,sizeof(message),"SPRITE DIAGNOSTIC 2: loaded texture %08lX",(unsigned long)hash);
-    checkpoint(message);
+    C3D_TexSetFilter(texture,GPU_NEAREST,GPU_NEAREST);
+    C3D_TexSetWrap(texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);C3D_TexFlush(texture);
+    *texture_hash=hash;snprintf(message,sizeof(message),"PLAYER FORMS 1: %s %08lX",stem,(unsigned long)hash);checkpoint(message);return true;
+}
+static void load_character(void) {
+    character_ready=load_character_texture(&character_texture,&character_texture_hash,"mario");
+    form_ready[0]=load_character_texture(&form_textures[0],&form_hash[0],"mario-small");
+    form_ready[1]=load_character_texture(&form_textures[1],&form_hash[1],"mario-propeller");
+}
+static void load_items(void) {
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/items.nsi","rb");
+    if(!f) { checkpoint("Items missing; blocks remain static");return; }
+    size_t n=fread(item_bytes,1,sizeof(item_bytes),f);
+    int extra=fgetc(f),error=ferror(f);fclose(f);
+    if(error||extra!=EOF||!items_decode(&items,item_bytes,n,&terrain,terrain_package_hash)) {
+        checkpoint("Items invalid/mismatched; blocks remain static");return;
+    }
+    items_ready=true;checkpoint("ITEM TEST 1: original opening contents loaded");
+    if(!C3D_TexInit(&item_texture,128,64,GPU_RGBA8)) {checkpoint("Item texture allocation failed; simple icons");return;}
+    f=fopen("sdmc:/3ds/nsmbw-prototype/data/items.rgba","rb");
+    if(!f) {C3D_TexDelete(&item_texture);checkpoint("Item texture missing; simple icons");return;}
+    n=fread(item_texture.data,1,ITEM_TEXTURE_BYTES,f);extra=fgetc(f);error=ferror(f);fclose(f);
+    if(error||extra!=EOF||n!=ITEM_TEXTURE_BYTES||terrain_hash(item_texture.data,n)!=items.texture_hash) {
+        C3D_TexDelete(&item_texture);checkpoint("Item texture mismatch; simple icons");return;
+    }
+    C3D_TexSetFilter(&item_texture,GPU_LINEAR,GPU_LINEAR);
+    C3D_TexSetWrap(&item_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    C3D_TexFlush(&item_texture);item_texture_ready=true;
 }
 static void draw_character_atlas(void) {
     /* Whole sheet uses fixed UVs, independently of animation-cell selection. */
@@ -238,17 +271,54 @@ static void draw_character_atlas(void) {
 }
 static void draw_player(void) {
     if(player.respawn_ticks) return;
-    if(!character_ready) {
+    if(player.invincible_ticks&&(player.invincible_ticks/8)%2) return;
+    int selected=player.powered_rules?(player.power==POWER_SMALL?0:player.power==POWER_PROPELLER?1:-1):-1;
+    bool specific=selected>=0&&form_ready[selected];
+    if(!character_ready&&!specific) {
         clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,16*scale,player.height*scale,C2D_Color32(255,205,80,255));return;
     }
     unsigned frame=character_frame(&character);
     float u=(frame%8)/8.0f,v=1.0f-(frame/8)/4.0f;
     Tex3DS_SubTexture sub={.width=64,.height=64,.left=u,.top=v,.right=u+1/8.0f,.bottom=v-1/4.0f};
     if(character.facing<0) { sub.left=u+1/8.0f;sub.right=u; }
-    C2D_Image image={&character_texture,&sub};
-    float height=player.crouched?24.0f:48.0f;
+    C2D_Image image={specific?&form_textures[selected]:&character_texture,&sub};
+    float height=player.crouched||(!specific&&player.powered_rules&&player.power==POWER_SMALL)?24.0f:48.0f;
     C2D_DrawImageAt(image,(player.x+8-24-camera_x)*scale,
         7.5f+(player.y+player.height-height*(15/16.0f)-camera_y)*scale,0,NULL,48*scale/64,height*scale/64);
+    if(!specific&&player.powered_rules&&player.power==POWER_PROPELLER) {
+        /* Fallback marker if the original suit package failed to load. */
+        float x=(player.x+8-camera_x)*scale,y=7.5f+(player.y-5-camera_y)*scale;
+        clipped_rect(x-1,y,2,5,C2D_Color32(245,210,40,255));
+        clipped_rect(x-7,y-1,14,2,C2D_Color32(245,210,40,255));
+    }
+}
+static void draw_items(void) {
+    if(!items_ready) return;
+    for(unsigned i=0;i<items.count;i++) {
+        const ItemBlock *v=&items.blocks[i];
+        float x=(v->x-camera_x)*scale,y=7.5f+(v->y-camera_y)*scale;
+        if(v->kind==ITEM_COIN&&v->tile_index==65535&&!v->state) {
+            Tex3DS_SubTexture sub={.width=16,.height=16,.left=30/32.0f,.top=1,.right=31/32.0f,.bottom=1-16/512.0f};
+            C2D_Image im={&terrain_texture,&sub};C2D_DrawImageAt(im,x,y,0,NULL,scale,scale);
+        }
+    }
+    for(unsigned i=0;i<ITEM_POOL;i++) {
+        const Pickup *q=&items.pickups[i];if(!q->state) continue;
+        float x=(q->body.x-camera_x)*scale,y=7.5f+(q->body.y-camera_y)*scale;
+        if(item_texture_ready) {
+            float u=q->kind==POWER_PROPELLER?0.5f:0;
+            Tex3DS_SubTexture sub={.width=64,.height=64,.left=u,.top=1,.right=u+0.5f,.bottom=0};
+            C2D_Image im={&item_texture,&sub};
+            C2D_DrawImageAt(im,x-2*scale,y-2*scale,0,NULL,20*scale/64,20*scale/64);continue;
+        }
+        clipped_rect(x+4*scale,y+8*scale,8*scale,8*scale,C2D_Color32(245,215,150,255));
+        clipped_rect(x,y+3*scale,16*scale,7*scale,C2D_Color32(230,45,35,255));
+        clipped_rect(x+5*scale,y+4*scale,4*scale,4*scale,C2D_Color32(255,240,215,255));
+        if(q->kind==POWER_PROPELLER) {
+            clipped_rect(x+7*scale,y,2*scale,3*scale,C2D_Color32(250,215,35,255));
+            clipped_rect(x-2*scale,y,20*scale,scale,C2D_Color32(250,215,35,255));
+        }
+    }
 }
 static unsigned draw_movement(void) {
     unsigned visible=0;
@@ -288,11 +358,20 @@ static unsigned draw_terrain(void) {
     clipped_rect(0,7.5f,400,225,C2D_Color32(91,160,208,255));
     for(unsigned i=0;i<terrain.count;i++) {
         const TerrainTile *t=&terrain.tiles[i];
+        const ItemBlock *block=NULL;
+        if(items_ready) for(unsigned j=0;j<items.count;j++) if(items.blocks[j].tile_index==i) {block=&items.blocks[j];break;}
+        if(block&&block->state&&(block->kind==ITEM_COIN||block->state==2)) continue;
         if(t->x+16<=camera_x||t->x>=camera_x+640||t->y+16<=camera_y||t->y>=camera_y+360) continue;
+        float bump=block&&block->bump?(block->bump>6?12-block->bump:block->bump)*0.6f:0;
+        if(block&&block->state==1) {
+            clipped_rect((t->x-camera_x)*scale,7.5f+(t->y-camera_y-bump)*scale,16*scale,16*scale,C2D_Color32(151,99,43,255));
+            clipped_rect((t->x+2-camera_x)*scale,7.5f+(t->y+2-camera_y-bump)*scale,12*scale,12*scale,C2D_Color32(185,130,65,255));
+            visible++;continue;
+        }
         float u=(t->tile%32)*16/512.0f,v=1.0f-(t->tile/32)*16/512.0f;
         Tex3DS_SubTexture sub={.width=16,.height=16,.left=u,.top=v,.right=u+16/512.0f,.bottom=v-16/512.0f};
         C2D_Image image={&terrain_texture,&sub};
-        C2D_DrawImageAt(image,(t->x-camera_x)*scale,7.5f+(t->y-camera_y)*scale,0,NULL,scale,scale);
+        C2D_DrawImageAt(image,(t->x-camera_x)*scale,7.5f+(t->y-camera_y-bump)*scale,0,NULL,scale,scale);
         visible++;
     }
     /* The actor covers the valley tiles; drawing underneath exposes buried grass. */
@@ -303,7 +382,7 @@ static unsigned draw_terrain(void) {
                         800.0f/512*scale,800.0f/512*scale);
         visible++;
     }
-    draw_enemies();
+    draw_items();draw_enemies();
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
     draw_player();
     /* Preserve the 640x360 proportional viewport, including at vertical edges. */
@@ -322,9 +401,15 @@ static int save_samples(const FixedClock *clock) {
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
     fprintf(f,"# hill_test=1; hill_loaded=%u; hill_texture_bytes=%u; hill_hash=%08lx\n",
             (unsigned)hill_ready,(unsigned)(hill_ready?TERRAIN_TEXTURE_BYTES:0),(unsigned long)terrain.hill_texture_hash);
+    fprintf(f,"# item_test=1; items_loaded=%u; coins=%u; power=%u; item_buffers_bytes=%lu\n",
+            (unsigned)items_ready,items.coins,player.power,(unsigned long)(sizeof(items)+sizeof(item_bytes)));
+    fprintf(f,"# item_texture_bytes=%u; item_texture_loaded=%u\n",item_texture_ready?ITEM_TEXTURE_BYTES:0,(unsigned)item_texture_ready);
     fprintf(f,"# enemy_test=1; enemies_loaded=%u; pause_not_logged\n",enemies_ready?enemies.count:0);
     fprintf(f,"# mario_sprite_test=1; mario_loaded=%u; mario_texture_bytes=%u\n",character_ready?1u:0u,character_ready?CHARACTER_TEXTURE_BYTES:0u);
     fprintf(f,"# sprite_diagnostic=2; mario_texture_fnv=%08lX\n",(unsigned long)character_texture_hash);
+    fprintf(f,"# player_forms=1; small_loaded=%u; propeller_loaded=%u; small_fnv=%08lX; propeller_fnv=%08lX; form_texture_bytes=%u\n",
+        form_ready[0]?1u:0u,form_ready[1]?1u:0u,(unsigned long)form_hash[0],(unsigned long)form_hash[1],
+        ((form_ready[0]?1u:0u)+(form_ready[1]?1u:0u))*CHARACTER_TEXTURE_BYTES);
     fprintf(f,"frame,frame_ms,citro3d_cpu_ms,citro3d_gpu_ms,visible_records,total_discarded_steps,mode,atlas_view\n");
     for(unsigned i=0;i<sample_count;i++) fprintf(f,"%u,%.5f,%.5f,%.5f,%lu,%lu,%lu,%lu\n",i,samples[i].frame_ms,
         samples[i].cpu_ms,samples[i].gpu_ms,(unsigned long)samples[i].visible,(unsigned long)samples[i].dropped,(unsigned long)samples[i].mode,(unsigned long)samples[i].atlas_view);
@@ -388,10 +473,11 @@ int main(void) {
     checkpoint("[10] Loading TERRAIN TEST 1 package");
     if(load_terrain()) mode=3;
     checkpoint(status);
-    if(terrain_ready) { load_hill(); load_enemies(); }
+    if(terrain_ready) { load_hill(); load_enemies();load_items(); }
     load_character();character_reset(&character);
     if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
     player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
+    if(mode==3&&items_ready) items_reset(&items,&terrain,&player);
     camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
     checkpoint("TERRAIN TEST 1 - opening slice, approximate physics");
     checkpoint("[11] Course ready; preparing first frame");
@@ -404,17 +490,18 @@ int main(void) {
         double elapsed=(double)(now-last)/(double)SYSCLOCK_ARM11; last=now;
         hidScanInput(); uint32_t held=hidKeysHeld(), down=hidKeysDown();
         if((held&(KEY_SELECT|KEY_START))==(KEY_SELECT|KEY_START)) break;
-        if((down&KEY_R)&&character_ready&&(mode==0||mode==3)) character_atlas_view=!character_atlas_view;
+        if((down&KEY_R)&&character_ready&&mode==0) character_atlas_view=!character_atlas_view;
         if((down&KEY_SELECT)&&!(held&KEY_START)) {
             mode=(mode+1)%4;
             character_atlas_view=false;
             if(mode==3&&!terrain_ready) mode=0;
             input=(InputState){0}; pending=0;
             if(mode==1||mode==2) load_area(mode);
-            else { player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
+            else { player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character); if(mode==3&&items_ready) items_reset(&items,&terrain,&player); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160; }
         }
         if((mode==0||mode==3)&&(down&KEY_TOUCH)) {
             player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
+            if(mode==3&&items_ready) items_reset(&items,&terrain,&player);
             input=(InputState){0}; pending=0;
         }
         circlePosition circle; hidCircleRead(&circle);
@@ -427,6 +514,7 @@ int main(void) {
             if(mode==0||mode==3) {
                 if(mode==3&&enemies_ready) encounter_step(&enemies,&player,active_level(),&actions,camera_x);
                 else player_step(&player,active_level(),&actions);
+                if(mode==3&&items_ready) items_step(&items,&terrain,&player,&actions);
                 character_step(&character,player.vx,player.grounded,player.crouched,actions.paused,player.respawn_ticks!=0);
                 camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==3?-40:160;
             } else if(!actions.paused) {
@@ -440,9 +528,11 @@ int main(void) {
             if(mode==0||mode==3) {
                 printf("%s\n\n",mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
-                printf("SPRITE DIAGNOSTIC 2: %s\n",character_ready?"loaded":"yellow fallback");
+                printf("PLAYER FORMS 1: S=%u N=%u P=%u\n",form_ready[0]?1u:0u,character_ready?1u:0u,form_ready[1]?1u:0u);
                 printf("Texture: %08lX  Frame: %u\n",(unsigned long)character_texture_hash,character_frame(&character));
-                printf("R: sheet view %s\n",character_atlas_view?"ON (game frozen)":"OFF");
+                if(mode==3) printf("R: Propeller boost   Down: descend\nITEM TEST 1: %s  Coins: %u\nPower: %s\n",items_ready?"loaded":"missing",items.coins,
+                                   player.power==POWER_PROPELLER?"Propeller":player.power==POWER_SUPER?"Super":"Small");
+                else printf("R: sheet view %s\n",character_atlas_view?"ON (game frozen)":"OFF");
                 if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":"Reach the green section marker"));
@@ -489,7 +579,9 @@ cleanup:
     if(c3d_ready) C3D_FrameSync();
     if(terrain_ready) C3D_TexDelete(&terrain_texture);
     if(hill_ready) C3D_TexDelete(&hill_texture);
+    if(item_texture_ready) C3D_TexDelete(&item_texture);
     if(character_ready) C3D_TexDelete(&character_texture);
+    for(unsigned i=0;i<2;i++) if(form_ready[i]) C3D_TexDelete(&form_textures[i]);
     if(c2d_ready) C2D_Fini();
     if(c3d_ready) C3D_Fini();
     checkpoint("[18] Returning to launcher");

@@ -86,7 +86,7 @@ def png(width, height, rgba):
             chunk(b'IDAT', zlib.compress(rows)) + chunk(b'IEND', b''))
 
 
-def definition(data, offset):
+def definition(data, offset, preserve_contents=False):
     rows, row = [], []
     if not 0 <= offset < len(data):
         raise ValueError('Object offset outside definitions')
@@ -107,7 +107,8 @@ def definition(data, offset):
         else:
             if offset+2 > len(data):
                 raise ValueError('Truncated object tile')
-            row.append((control, data[offset] | ((data[offset+1] & 3) << 8)))
+            high=data[offset+1] if preserve_contents else data[offset+1]&3
+            row.append((control, data[offset] | (high << 8)))
             offset += 2
     raise ValueError('Missing object terminator')
 

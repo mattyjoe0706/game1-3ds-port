@@ -17,7 +17,12 @@ typedef struct {
     float x,y,vx,vy,height;
     unsigned deaths, respawn_ticks;
     int grounded, crouched, finished, on_slope;
+    unsigned power, invincible_ticks, propeller_used;
+    int powered_rules, head_hit;
 } Player;
+enum { POWER_SMALL=0, POWER_SUPER=1, POWER_PROPELLER=4 };
+void player_power(Player *p,const MovementLevel *level,unsigned power);
+void player_damage(Player *p,const MovementLevel *level);
 extern const MovementLevel movement_test_level;
 void player_reset(Player *p, const MovementLevel *level);
 /* Exactly one 60 Hz step. No allocations; swept axis collision against solids. */

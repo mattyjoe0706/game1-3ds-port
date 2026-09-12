@@ -1,5 +1,11 @@
 # Opening circular hill: HILL TEST 1
 
+User update, 2026-09-10: HILL TEST 1 works well on the handheld. Rotation and
+the remaining hill instances are explicitly deferred to the final World 1-1
+fidelity/testing pass. See LEVEL_VALIDATION.md for the mandatory per-level process
+and final original-game comparison. Static support acceptance is not acceptance
+of complete rolling-hill behavior.
+
 The missing terrain is actor 212, Rolling Hill. It is a separate textured
 circle, not a deforming wave in the static tile layer. The local USA rev-2
 course has the opening instance at (1456,544), settings 0x01301801. Reggie Next's

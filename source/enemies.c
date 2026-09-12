@@ -68,6 +68,6 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
         } else if(overlap(p->y,p->height,e->body.y,16)) hit=1;
     }
     /* A simultaneous side contact still hurts, even if another enemy was stomped. */
-    if(hit) { p->deaths++;p->respawn_ticks=45;p->vx=p->vy=0; }
+    if(hit) player_damage(p,l);
     else if(stomp) { p->y=landing;p->vy=a->jump_held?-7.5f:-4.5f;p->grounded=p->on_slope=0; }
 }

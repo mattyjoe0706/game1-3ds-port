@@ -34,9 +34,10 @@ def decode(data,width,height,kind):
                         put(bx+x,by+y,color)
     return bytes(out)
 
-def textures(reader):
+def textures(reader,names=None):
     result={}
     for name,p in reader.resources().get('Textures(NW4R)',[]):
+        if names is not None and name not in names:continue
         version=reader.read('I',p+8)
         if version not in (1,3):raise ValueError('Unsupported TEX0 version')
         end=reader.section(p,b'TEX0',version)

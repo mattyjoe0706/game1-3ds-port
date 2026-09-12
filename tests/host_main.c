@@ -4,6 +4,7 @@ int run_movement_tests(void);
 int run_terrain_tests(void);
 int run_enemies_tests(void);
 int run_character_tests(void);
+int run_items_tests(void);
 int main(void) {
     int result=run_core_tests();
     if(result) { fprintf(stderr,"C core test failed at core_tests.c:%d\n",result); return 1; }
@@ -15,6 +16,8 @@ int main(void) {
     if(result) { fprintf(stderr,"Enemy test failed at enemies_tests.c:%d\n",result); return 1; }
     result=run_character_tests();
     if(result) { fprintf(stderr,"Character test failed at character_tests.c:%d\n",result); return 1; }
-    puts("PASS portable core, movement, terrain, enemy and character tests; not native 3DS validation");
+    result=run_items_tests();
+    if(result) { fprintf(stderr,"Item test failed at items_tests.c:%d\n",result);return 1; }
+    puts("PASS portable core, movement, terrain, enemy, character and item tests; not native 3DS validation");
     return 0;
 }
