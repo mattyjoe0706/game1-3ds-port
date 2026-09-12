@@ -30,7 +30,7 @@ static void hash(void) {
     uint32_t h=2166136261u;for(unsigned i=0;i<32;i++) if(i<20||i>=24) h=(h^enemy_bytes[i])*16777619u;
     put(20,h);
 }
-int run_enemies_tests(void) {
+static int run_goomba_tests(void) {
     const Solid solids[]={{0,100,1000,64},{100,40,16,60}};
     const MovementLevel l={solids,2,1000,250,20,68,950,0,0};
     for(unsigned i=0;i<sizeof(enemy_bytes);i++) enemy_bytes[i]=0;
@@ -69,4 +69,61 @@ int run_enemies_tests(void) {
     enemies.items[0].body.y=260;encounter_step(&enemies,&p,&l,&a,500);
     CHECK(enemies.items[0].state==3);
     return 0;
+}
+
+static int run_shell_tests(void) {
+    Enemies e;Player p;Actions a={0};
+    enemies_test_scene(&e);player_reset(&p,&shell_test_level);
+    CHECK(e.count==3&&e.items[0].kind==57&&e.items[1].variant==1);
+    e.count=1;e.items[0].state=ENEMY_WALK;
+    p.x=176;p.y=105;p.vy=8;
+    encounter_step(&e,&p,&shell_test_level,&a,0);
+    CHECK(e.items[0].state==ENEMY_SHELL_IDLE&&p.vy<0);
+    p.x=157;p.y=128;p.vy=0;p.grounded=1;
+    CHECK(enemies_can_pickup(&e,&p));
+    InputState input={0};a=input_step(&input,BTN_X,0,0,enemies_can_pickup(&e,&p));
+    encounter_step(&e,&p,&shell_test_level,&a,0);
+    CHECK(enemies_carrying(&e)&&input.carrying);
+    for(int i=0;i<20;i++) {
+        a=input_step(&input,BTN_X,0,0,0);encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(enemies_carrying(&e)&&!a.throw_object&&!a.pickup);
+    }
+    float x=e.items[0].body.x;a.paused=1;encounter_step(&e,&p,&shell_test_level,&a,0);
+    CHECK(e.items[0].body.x==x&&enemies_carrying(&e));
+    a=input_step(&input,0,0,0,0);encounter_step(&e,&p,&shell_test_level,&a,0);
+    CHECK(e.items[0].state==ENEMY_SHELL_MOVING&&!input.carrying&&!p.respawn_ticks);
+    for(int i=0;i<5;i++) {a=input_step(&input,0,0,0,0);encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(!a.pickup&&!a.throw_object);}
+    e.items[0].body.x=608;e.items[0].direction=1;
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(e.items[0].direction==-1);
+    e.items[0].body.x=200;e.items[0].body.y=144;e.items[0].body.vy=0;
+    p.x=195;p.y=105;p.vy=8;
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(e.items[0].state==ENEMY_SHELL_IDLE);
+    p.x=64;p.y=128;p.vy=0;e.items[0].timer=1;
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(e.items[0].state==ENEMY_WALK);
+    e.items[0].state=ENEMY_SHELL_MOVING;e.items[0].body.x=p.x;e.items[0].owner_grace=0;
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(p.respawn_ticks&&p.deaths==1);
+    enemies_test_scene(&e);player_reset(&p,&shell_test_level);e.count=2;
+    e.items[0].state=ENEMY_SHELL_MOVING;e.items[0].body.x=200;e.items[0].direction=1;
+    e.items[1].state=ENEMY_WALK;e.items[1].kind=20;e.items[1].body.x=217;
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(e.items[1].state==ENEMY_REMOVED&&e.shell_hits==1);
+    enemies_reset(&e);CHECK(!enemies_carrying(&e)&&e.items[0].state==ENEMY_DORMANT&&e.shell_hits==0);
+    e.count=1;e.items[0].state=ENEMY_CARRIED;e.items[0].body.x=580;
+    p.x=608;p.y=128;p.vy=0;a=(Actions){0};a.carry_held=1;
+    encounter_step(&e,&p,&shell_test_level,&a,0);
+    CHECK(e.items[0].state==ENEMY_SHELL_IDLE&&e.items[0].body.x==580);
+    /* Red turns at a ledge, while green walks off it. */
+    Solid ledge={0,160,200,64};
+    MovementLevel cliff={&ledge,1,640,320,64,128,10000,0,0};
+    for(unsigned red=0;red<2;red++) {
+        enemies_test_scene(&e);e.count=1;e.items[0].variant=red;
+        e.items[0].state=ENEMY_WALK;e.items[0].direction=1;
+        e.items[0].body.x=190;e.items[0].body.grounded=1;
+        player_reset(&p,&cliff);a=(Actions){0};
+        encounter_step(&e,&p,&cliff,&a,0);
+        CHECK(e.items[0].direction==(red?-1:1));
+    }
+    return 0;
+}
+int run_enemies_tests(void) {
+    int r=run_goomba_tests();return r?r:run_shell_tests();
 }
