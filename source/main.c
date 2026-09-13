@@ -23,6 +23,7 @@ static CharacterAnim character;
 static C3D_Tex character_texture;
 static C3D_Tex form_textures[2];
 static bool form_ready[2];
+static bool form_carry_ready[2],character_carry_ready;
 static uint32_t form_hash[2];
 static bool character_ready;
 static uint32_t character_texture_hash;
@@ -215,7 +216,8 @@ static unsigned draw_scene(void) {
     }
     return visible;
 }
-static bool load_character_texture(C3D_Tex *texture,uint32_t *texture_hash,const char *stem) {
+static bool load_character_texture(C3D_Tex *texture,uint32_t *texture_hash,bool *carry_ready,const char *stem) {
+    *carry_ready=false;
     uint8_t header[32];uint32_t hash;char path[160],message[192];
     snprintf(path,sizeof(path),"sdmc:/3ds/nsmbw-prototype/data/%s.nsp",stem);
     FILE *f=fopen(path,"rb");
@@ -231,12 +233,13 @@ static bool load_character_texture(C3D_Tex *texture,uint32_t *texture_hash,const
     }
     C3D_TexSetFilter(texture,GPU_NEAREST,GPU_NEAREST);
     C3D_TexSetWrap(texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);C3D_TexFlush(texture);
-    *texture_hash=hash;snprintf(message,sizeof(message),"PLAYER FORMS 1: %s %08lX",stem,(unsigned long)hash);checkpoint(message);return true;
+    *carry_ready=header[20]==32;
+    *texture_hash=hash;snprintf(message,sizeof(message),"PLAYER FORMS 2: %s %08lX carry=%u",stem,(unsigned long)hash,*carry_ready?1u:0u);checkpoint(message);return true;
 }
 static void load_character(void) {
-    character_ready=load_character_texture(&character_texture,&character_texture_hash,"mario");
-    form_ready[0]=load_character_texture(&form_textures[0],&form_hash[0],"mario-small");
-    form_ready[1]=load_character_texture(&form_textures[1],&form_hash[1],"mario-propeller");
+    character_ready=load_character_texture(&character_texture,&character_texture_hash,&character_carry_ready,"mario");
+    form_ready[0]=load_character_texture(&form_textures[0],&form_hash[0],&form_carry_ready[0],"mario-small");
+    form_ready[1]=load_character_texture(&form_textures[1],&form_hash[1],&form_carry_ready[1],"mario-propeller");
 }
 static void load_items(void) {
     FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/items.nsi","rb");
@@ -277,7 +280,8 @@ static void draw_player(void) {
     if(!character_ready&&!specific) {
         clipped_rect((player.x-camera_x)*scale,7.5f+(player.y-camera_y)*scale,16*scale,player.height*scale,C2D_Color32(255,205,80,255));return;
     }
-    unsigned frame=character_frame(&character);
+    bool carrying=(mode==3||mode==4)&&enemies_carrying(&enemies);
+    unsigned frame=carrying&&(specific?form_carry_ready[selected]:character_carry_ready)?character_carry_frame(&character):character_frame(&character);
     float u=(frame%8)/8.0f,v=1.0f-(frame/8)/4.0f;
     Tex3DS_SubTexture sub={.width=64,.height=64,.left=u,.top=v,.right=u+1/8.0f,.bottom=v-1/4.0f};
     if(character.facing<0) { sub.left=u+1/8.0f;sub.right=u; }
@@ -320,7 +324,7 @@ static void draw_items(void) {
         }
     }
 }
-static void draw_enemies(void);
+static void draw_enemies(bool carried);
 static unsigned draw_movement(void) {
     const MovementLevel *level=active_level();
     unsigned visible=0;
@@ -333,13 +337,15 @@ static unsigned draw_movement(void) {
     }
     if(mode==0) clipped_rect((movement_test_level.goal_x-camera_x)*scale,7.5f+(320-camera_y)*scale,
                  4,128*scale,C2D_Color32(93,240,120,255));
-    if(mode==4) draw_enemies();
+    if(mode==4) draw_enemies(false);
     draw_player();
+    if(mode==4) draw_enemies(true);
     return visible;
 }
-static void draw_enemies(void) {
+static void draw_enemies(bool carried) {
     for(unsigned i=0;i<enemies.count;i++) {
         const Enemy *e=&enemies.items[i];
+        if((e->state==ENEMY_CARRIED)!=carried) continue;
         if(e->state==ENEMY_DORMANT||e->state==ENEMY_REMOVED) continue;
         float x=(e->body.x-camera_x)*scale,y=7.5f+(e->body.y-camera_y)*scale;
         if(x+16*scale<0||x>400) continue;
@@ -394,9 +400,10 @@ static unsigned draw_terrain(void) {
                         800.0f/512*scale,800.0f/512*scale);
         visible++;
     }
-    draw_items();draw_enemies();
+    draw_items();draw_enemies(false);
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
     draw_player();
+    draw_enemies(true);
     /* Preserve the 640x360 proportional viewport, including at vertical edges. */
     C2D_DrawRectSolid(0,0,0,400,7.5f,C2D_Color32(12,18,30,255));
     C2D_DrawRectSolid(0,232.5f,0,400,7.5f,C2D_Color32(12,18,30,255));
@@ -532,6 +539,7 @@ int main(void) {
                 else player_step(&player,active_level(),&actions);
                 if(mode==3&&items_ready) items_step(&items,&terrain,&player,&actions);
                 character_step(&character,player.vx,player.grounded,player.crouched,actions.paused,player.respawn_ticks!=0);
+                if(encounter&&enemies_carrying(&enemies)) character.facing=enemies.facing;
                 camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==4?0:mode==3?-40:160;
             } else if(!actions.paused) {
                 float speed=actions.run_fire?8:4;
@@ -543,13 +551,13 @@ int main(void) {
             consoleClear();
             if(mode==0||mode==3||mode==4) {
                 printf("%s\n\n",mode==4?"KOOPA / SHELL TEST 1\nPlaceholder enemies; no audio":mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
-                printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY: run   Down: crouch\nTouch screen: restart\n");
+                printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY / X: run and carry\nDown: crouch   Touch: restart\n");
                 printf("PLAYER FORMS 1: S=%u N=%u P=%u\n",form_ready[0]?1u:0u,character_ready?1u:0u,form_ready[1]?1u:0u);
                 printf("Texture: %08lX  Frame: %u\n",(unsigned long)character_texture_hash,character_frame(&character));
                 if(mode==3) printf("R: Propeller boost   Down: descend\nITEM TEST 1: %s  Coins: %u\nPower: %s\n",items_ready?"loaded":"missing",items.coins,
                                    player.power==POWER_PROPELLER?"Propeller":player.power==POWER_SUPER?"Super":"Small");
                 else if(mode==0) printf("R: sheet view %s\n",character_atlas_view?"ON (game frozen)":"OFF");
-                if(mode==4) printf("X: hold to carry; release to throw\nCarry: %d  Stomps: %u  Hits: %u\n",enemies_carrying(&enemies),enemies.stomps,enemies.shell_hits);
+                if(mode==4) printf("SHELL REFINEMENT 2\nY/X: hold; release both to throw\nCarry poses: %s\nCarry: %d  Stomps: %u  Hits: %u\n",character_carry_ready?"loaded":"OLD DATA - update sprites",enemies_carrying(&enemies),enemies.stomps,enemies.shell_hits);
                 if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":mode==4?"Stomp, carry, throw; touch to reset":"Reach the green section marker"));

@@ -2,7 +2,7 @@
 static uint32_t word(const uint8_t *p) { return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
 int character_header(const uint8_t *d,size_t n,uint32_t *hash) {
     if(!d||!hash||n!=32||d[0]!='N'||d[1]!='S'||d[2]!='P'||d[3]!='1') return 0;
-    if(word(d+4)!=1||word(d+8)!=512||word(d+12)!=256||word(d+16)!=64||word(d+20)!=21) return 0;
+    if(word(d+4)!=1||word(d+8)!=512||word(d+12)!=256||word(d+16)!=64||(word(d+20)!=21&&word(d+20)!=32)) return 0;
     uint32_t h=2166136261u;
     for(unsigned i=0;i<28;i++) h=(h^d[i])*16777619u;
     if(h!=word(d+28)) return 0;
@@ -21,4 +21,9 @@ void character_step(CharacterAnim *a,float vx,int grounded,int crouched,int paus
 }
 unsigned character_frame(const CharacterAnim *a) {
     return a->state==3?20u:a->state==0?(a->tick%160)/40:(a->state==2?12u:4u)+(a->tick%60)*8/60;
+}
+unsigned character_carry_frame(const CharacterAnim *a) {
+    if(a->state==3) return 30;
+    if(a->state==0) return a->tick<80?21:31;
+    return 22+((a->tick*(a->state==2?2u:1u))%60)*8/60;
 }

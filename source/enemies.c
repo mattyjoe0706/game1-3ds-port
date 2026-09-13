@@ -15,8 +15,8 @@ static int pickup_index(const Enemies *all,const Player *p) {
     if(p->respawn_ticks||p->finished||enemies_carrying(all)) return -1;
     for(unsigned i=0;i<all->count;i++) {
         const Enemy *e=&all->items[i];
-        if(e->state==ENEMY_SHELL_IDLE&&overlap(p->x-4,24,e->body.x,16)&&
-           overlap(p->y,p->height,e->body.y,16)) return (int)i;
+        if(e->state==ENEMY_SHELL_IDLE&&overlap(p->x-8,32,e->body.x,16)&&
+           p->y<e->body.y+16&&p->y+p->height>=e->body.y-6) return (int)i;
     }
     return -1;
 }
@@ -36,6 +36,17 @@ static void drop_carried(Enemies *all) {
     for(unsigned i=0;i<all->count;i++) if(all->items[i].state==ENEMY_CARRIED) {
         all->items[i].state=ENEMY_SHELL_IDLE;all->items[i].timer=SHELL_SLEEP;
     }
+}
+static void attach_shell(Enemy *e,const Player *p,const MovementLevel *l,int facing) {
+    /* Forward at hand height; small Mario's hands sit lower. */
+    float x=p->x+(facing>0?8:-8),y=p->y+p->height-p->height*0.5f-8;
+    for(unsigned j=0;j<l->count;j++) {
+        const Solid *s=&l->solids[j];
+        if(overlap(x,16,s->x,s->w)&&overlap(y,16,s->y,s->h)) {
+            e->state=ENEMY_SHELL_IDLE;e->timer=SHELL_SLEEP;return;
+        }
+    }
+    e->body.x=x;e->body.y=y;e->body.vx=e->body.vy=0;
 }
 void enemies_reset(Enemies *out) {
     out->stomps=out->shell_hits=0;out->facing=1;
@@ -66,13 +77,18 @@ int enemies_decode(Enemies *out,const uint8_t *data,size_t n,uint32_t terrain_ha
 void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions *a,float camera_x) {
     if(a->paused||p->finished) return;
     if(a->move_x) all->facing=a->move_x>0?1:-1;
-    int pickup=a->pickup?pickup_index(all,p):-1;
+    int pickup=(a->pickup||a->pickup_armed)?pickup_index(all,p):-1;
     if(pickup>=0) all->items[pickup].state=ENEMY_CARRIED;
     unsigned respawning=p->respawn_ticks;
     float previous_bottom=p->y+p->height;
     player_step(p,l,a);
     if(respawning) { if(!p->respawn_ticks) enemies_reset(all); return; }
     if(p->respawn_ticks||p->finished) {drop_carried(all);return;}
+    /* Movement can enter pickup range during this update, before side kicks. */
+    if(a->pickup_armed&&!enemies_carrying(all)) {
+        pickup=pickup_index(all,p);
+        if(pickup>=0) all->items[pickup].state=ENEMY_CARRIED;
+    }
     for(unsigned i=0;i<all->count;i++) {
         Enemy *e=&all->items[i];
         if(e->state==0) {
@@ -81,17 +97,9 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
         }
         if(e->state==2) { if(!--e->timer) e->state=3; continue; }
         if(e->state==ENEMY_CARRIED) {
-            float x=p->x+(all->facing>0?17:-17),y=p->y+p->height-16;
-            int blocked=0;
-            for(unsigned j=0;j<l->count;j++) {
-                const Solid *s=&l->solids[j];
-                if(overlap(x,16,s->x,s->w)&&overlap(y,16,s->y,s->h)) blocked=1;
-            }
-            /* Keep the last safe position instead of throwing through a wall. */
-            if(blocked) {e->state=ENEMY_SHELL_IDLE;e->timer=SHELL_SLEEP;continue;}
-            e->body.x=x;e->body.y=y;
-            e->body.vx=e->body.vy=0;
-            if(a->throw_object||!a->carry_held) kick(e,all->facing);
+            attach_shell(e,p,l,all->facing);
+            if(e->state!=ENEMY_CARRIED) continue;
+            if(a->throw_object||!(a->carry_held||a->carry_intent)) kick(e,all->facing);
             else continue;
         }
         if(e->state!=ENEMY_WALK&&e->state!=ENEMY_SHELL_IDLE&&e->state!=ENEMY_SHELL_MOVING) continue;
@@ -137,7 +145,11 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
            p->y+p->height-previous_bottom>=e->body.y-e->previous_y) {
             if(e->kind==57) {
                 if(e->state==ENEMY_SHELL_IDLE) kick(e,p->x<e->body.x?1:-1);
-                else {e->state=ENEMY_SHELL_IDLE;e->timer=SHELL_SLEEP;e->body.vx=0;}
+                else {
+                    unsigned was_moving=e->state==ENEMY_SHELL_MOVING;
+                    e->state=ENEMY_SHELL_IDLE;e->timer=SHELL_SLEEP;e->body.vx=0;
+                    if(was_moving&&a->pickup_armed&&!enemies_carrying(all)) e->state=ENEMY_CARRIED;
+                }
             } else {e->state=2;e->timer=20;}
             all->stomps++;stomp=1;
             if(e->body.y-p->height<landing) landing=e->body.y-p->height;
@@ -149,4 +161,8 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
     /* A simultaneous side contact still hurts, even if another enemy was stomped. */
     if(hit) {player_damage(p,l);drop_carried(all);}
     else if(stomp) { p->y=landing;p->vy=a->jump_held?-7.5f:-4.5f;p->grounded=p->on_slope=0; }
+    /* Newly caught shells follow Mario in the same rendered frame. */
+    for(unsigned i=0;i<all->count;i++) if(all->items[i].state==ENEMY_CARRIED) {
+        attach_shell(&all->items[i],p,l,all->facing);
+    }
 }

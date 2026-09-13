@@ -36,6 +36,12 @@ int run_core_tests(void) {
     a=input_step(&s,BTN_LEFT,150,0,0); CHECK(a.move_x==-1);
     a=input_step(&s,BTN_LEFT|BTN_RIGHT,150,0,0); CHECK(a.move_x==0);
     a=input_step(&s,BTN_UP|BTN_DOWN,0,150,0); CHECK(a.move_y==0);
+    s=(InputState){0};
+    a=input_step(&s,BTN_Y,0,0,1);CHECK(a.pickup&&a.run_fire&&a.carry_intent);
+    a=input_step(&s,BTN_Y|BTN_X|BTN_B,0,0,1);CHECK(a.jump_pressed&&a.carry_held&&!a.throw_object);
+    a=input_step(&s,BTN_X,0,0,1);CHECK(a.carry_held&&a.run_fire&&!a.throw_object);
+    a=input_step(&s,0,0,0,1);CHECK(a.throw_object&&!a.carry_held);
+    a=input_step(&s,0,0,0,1);CHECK(!a.throw_object);
     FixedClock c={0}; unsigned total=0;
     for(int i=0;i<120;i++) total+=clock_advance(&c,1.0/120.0);
     CHECK(total==60&&c.discarded_steps==0);

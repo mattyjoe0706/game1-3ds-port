@@ -35,9 +35,10 @@ typedef struct {
 typedef struct {
     int move_x, move_y, jump_pressed, jump_held, run_fire;
     int pickup, throw_object, carry_held, spin, tilt, paused;
+    int carry_intent, pickup_armed;
 } Actions;
 /* Call at 60 Hz. Eligibility comes from the actor/collision system.
- * Holding X picks up when eligible, at most once per uninterrupted hold.
+ * Holding Y or X runs/carries; pickup occurs once per uninterrupted hold.
  * Object destruction/death must clear state.carrying in the caller.
  */
 Actions input_step(InputState *state, uint32_t buttons, int pad_x, int pad_y, int can_pickup);

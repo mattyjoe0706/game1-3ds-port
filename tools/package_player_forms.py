@@ -5,9 +5,10 @@ from PIL import Image
 from inspect_assets import unpack_u8
 from convert_character import Reader,model,animation
 from character_texture import textures
-from package_character import FRAMES,swizzle
+from package_character import FRAMES as BASE_FRAMES,swizzle
 from preview_character import render
 from convert_course import fnv1a
+FRAMES=BASE_FRAMES+[('carry_wait',0)]+[('carry_walk',i*60/8) for i in range(8)]+[('carry_wait',40),('carry_wait',80)]
 
 def package(extracted,output):
     extracted=Path(extracted).resolve();output=Path(output).resolve()

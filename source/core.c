@@ -43,12 +43,15 @@ Actions input_step(InputState *s, uint32_t b, int px, int py, int can_pickup) {
     if (b&(BTN_UP|BTN_DOWN)) a.move_y=!!(b&BTN_DOWN)-!!(b&BTN_UP);
     else a.move_y=(py< -40)-(py>40);
     a.jump_pressed=!!(pressed&(BTN_A|BTN_B));
-    a.jump_held=!!(b&(BTN_A|BTN_B)); a.run_fire=!!(b&BTN_Y);
+    a.jump_held=!!(b&(BTN_A|BTN_B)); a.run_fire=!!(b&(BTN_Y|BTN_X));
     a.spin=!!(pressed&BTN_R);
     a.tilt=!!(b&BTN_ZR)-!!(b&(BTN_L|BTN_ZL));
-    if (!(b&BTN_X)) s->pickup_used=0;
-    if (s->carrying && !(b&BTN_X)) { a.throw_object=1; s->carrying=0; }
-    else if (!s->carrying && (b&BTN_X) && !s->pickup_used && can_pickup) {
+    a.carry_intent=!!(b&(BTN_Y|BTN_X));
+    if (!a.carry_intent) s->pickup_used=0;
+    if (s->carrying && a.carry_intent) s->pickup_used=1;
+    a.pickup_armed=a.carry_intent&&!s->carrying&&!s->pickup_used;
+    if (s->carrying && !a.carry_intent) { a.throw_object=1; s->carrying=0; }
+    else if (a.pickup_armed && can_pickup) {
         a.pickup=1; s->carrying=1; s->pickup_used=1;
     }
     a.carry_held=s->carrying;

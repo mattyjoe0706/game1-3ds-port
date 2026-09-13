@@ -156,5 +156,33 @@ static int run_held_approach_tests(void) {
 }
 int run_enemies_tests(void) {
     int r=run_goomba_tests();if(r)return r;
-    r=run_shell_tests();return r?r:run_held_approach_tests();
+    r=run_shell_tests();if(r)return r;
+    r=run_held_approach_tests();if(r)return r;
+    for(int moving=0;moving<2;moving++) for(int hold=0;hold<2;hold++) {
+        Enemies e;Player p;InputState input={0};
+        enemies_test_scene(&e);e.count=1;
+        e.items[0].body.x=300;e.items[0].state=moving?ENEMY_SHELL_MOVING:ENEMY_SHELL_IDLE;
+        e.items[0].timer=511;e.items[0].direction=1;
+        player_reset(&p,&shell_test_level);p.x=300;p.y=106;p.vy=6;
+        Actions a=input_step(&input,hold?BTN_Y:0,0,0,enemies_can_pickup(&e,&p));
+        encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(!p.respawn_ticks);
+        CHECK(e.items[0].state==(hold?ENEMY_CARRIED:moving?ENEMY_SHELL_IDLE:ENEMY_SHELL_MOVING));
+        if(hold) {
+            input.carrying=enemies_carrying(&e);
+            a=input_step(&input,BTN_Y,0,0,0);
+            encounter_step(&e,&p,&shell_test_level,&a,0);
+            CHECK(enemies_carrying(&e)&&!a.throw_object);
+        }
+    }
+    /* Holding run is not immunity to a moving shell's side collision. */
+    Enemies e;Player p;InputState input={0};
+    enemies_test_scene(&e);e.count=1;e.items[0].state=ENEMY_SHELL_MOVING;e.items[0].body.x=300;
+    player_reset(&p,&shell_test_level);p.x=300;
+    Actions a=input_step(&input,BTN_Y,0,0,enemies_can_pickup(&e,&p));
+    encounter_step(&e,&p,&shell_test_level,&a,0);CHECK(p.respawn_ticks&&!enemies_carrying(&e));
+    /* The generous pickup margin has a finite upper boundary. */
+    e.items[0].state=ENEMY_SHELL_IDLE;player_reset(&p,&shell_test_level);p.x=300;p.y=90;
+    CHECK(!enemies_can_pickup(&e,&p));p.y=107;CHECK(enemies_can_pickup(&e,&p));
+    return 0;
 }
