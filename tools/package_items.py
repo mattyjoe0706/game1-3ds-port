@@ -4,6 +4,7 @@ from pathlib import Path
 from inspect_assets import unpack_u8
 from convert_course import decode_course,fnv1a
 from convert_tiles import definition,expand
+from route_section import SECTIONS, section_named
 
 
 def inventory(extracted):
@@ -37,50 +38,51 @@ def inventory(extracted):
     return result,actors
 
 
-def encode(records,actors,terrain,texture_hash=0):
-    if len(terrain)<36 or terrain[:4]!=b'NST1' or struct.unpack_from('<I',terrain,4)[0]!=1:
-        raise ValueError('Expected NST1')
-    count=struct.unpack_from('<I',terrain,8)[0]
-    if len(terrain)!=36+count*12 or struct.unpack_from('<4I',terrain,12)!=(1408,320,256,192):
-        raise ValueError('Unexpected opening terrain')
-    if fnv1a(terrain[:32]+terrain[36:])!=struct.unpack_from('<I',terrain,32)[0]:raise ValueError('Invalid terrain hash')
+def encode(records,actors,terrain,texture_hash=0,section='opening'):
+    bounds=section_named(section)
+    bounds.validate_terrain(terrain)
     tiles={}
     for i,row in enumerate(struct.iter_unpack('<HHHBBBBH',terrain[36:])):
         x,y,tile,kind,left,right,layer,reserved=row
-        if layer==1:tiles[x+496,y+384]=(i,tile)
+        if layer==1:tiles[x+bounds.x,y+bounds.y]=(i,tile)
     chosen=[]
     for r in records:
-        if r['area']!=1 or not (496<=r['x']<1904 and 384<=r['y']<704):continue
+        if r['area']!=1 or not bounds.contains(r):continue
         if r['tile'] not in (30,48,49):
             if r['contents'] or 3<=r['tile']<=13:raise ValueError('Unimplemented content-bearing tile in opening')
             continue
         kind={30:1,49:2,48:3}[r['tile']]
-        if (kind==2 and r['contents'] not in (0,7)) or (kind!=2 and r['contents']):
-            raise ValueError('Unimplemented block contents')
+        if (kind==2 and r['contents'] not in (0,7)) or (kind==3 and r['contents'] not in (0,2)) or (kind==1 and r['contents']):
+            raise ValueError(f'Unimplemented block contents {r["contents"]} in tile {r["tile"]} at {r["x"]},{r["y"]}')
         index,tile=tiles[r['x'],r['y']]
         if tile!=r['tile']:raise ValueError('Interaction/terrain mismatch')
-        chosen.append((r['x']-496,r['y']-384,index,kind,r['contents']))
+        chosen.append((r['x']-bounds.x,r['y']-bounds.y,index,kind,r['contents']))
     for r in actors:
-        if r['area']==1 and r['id']==147 and 496<=r['x']<1904 and 384<=r['y']<704:
+        if r['area']==1 and r['id']==422 and bounds.contains(r):
+            if r['param'] or r['layer']!=0:raise ValueError('Unsupported Toad-block settings')
+            index,tile=tiles[r['x'],r['y']]
+            if tile!=49:raise ValueError('Missing ordinary Toad-rescue coin-block terrain')
+            chosen.append((r['x']-bounds.x,r['y']-bounds.y,index,2,0))
+        if r['area']==1 and r['id']==147 and bounds.contains(r):
             if r['param'] or r['layer']!=0:raise ValueError('Unsupported actor coin settings')
-            chosen.append((r['x']-496,r['y']-384,65535,1,0))
+            chosen.append((r['x']-bounds.x,r['y']-bounds.y,65535,1,0))
     if len(chosen)>128:raise ValueError('Interaction capacity exceeded')
     payload=b''.join(struct.pack('<3HBBI',*row,0) for row in chosen)
     head=struct.pack('<4s4I',b'NSI1',1,len(chosen),fnv1a(terrain),texture_hash)
     return head+struct.pack('<I',fnv1a(head+payload))+payload
 
 
-def package(extracted,terrain_path,output):
+def package(extracted,terrain_path,output,section='opening'):
     extracted,output=Path(extracted).resolve(),Path(output).resolve()
     if output.exists() or extracted==output or extracted in output.parents or output in extracted.parents:
         raise ValueError('Choose a new output directory outside extraction')
     records,actors=inventory(extracted);terrain=Path(terrain_path).read_bytes()
     from item_graphics import bake
     image,texture=bake(extracted)
-    data=encode(records,actors,terrain,fnv1a(texture))
+    data=encode(records,actors,terrain,fnv1a(texture),section)
     output.mkdir(parents=True);(output/'items.nsi').write_bytes(data)
     (output/'items.rgba').write_bytes(texture);image.save(output/'items-preview.png')
-    report={'format':'NSI1','version':1,'count':(len(data)-24)//12,
+    report={'format':'NSI1','version':1,'count':(len(data)-24)//12,'section':section,
             'terrain_sha256':hashlib.sha256(terrain).hexdigest(),
             'items_sha256':hashlib.sha256(data).hexdigest(),
             'texture_sha256':hashlib.sha256(texture).hexdigest(),
@@ -96,4 +98,5 @@ def package(extracted,terrain_path,output):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('extracted',type=Path);p.add_argument('terrain',type=Path);p.add_argument('output',type=Path)
-    a=p.parse_args();print(json.dumps(package(a.extracted,a.terrain,a.output),indent=2))
+    p.add_argument('--section',choices=SECTIONS,default='opening')
+    a=p.parse_args();print(json.dumps(package(a.extracted,a.terrain,a.output,a.section),indent=2))

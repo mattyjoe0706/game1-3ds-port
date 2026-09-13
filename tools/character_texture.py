@@ -1,4 +1,4 @@
-"""Decode the I8, RGB565 and CMPR texture formats used in Mario.arc."""
+"""Decode I8, RGB565, RGB5A3 and CMPR textures used by the converted actors."""
 import struct
 
 def rgb565(word):
@@ -7,8 +7,8 @@ def rgb565(word):
 
 def decode(data,width,height,kind):
     if not 0<width<=1024 or not 0<height<=1024:raise ValueError('Invalid texture dimensions')
-    if kind not in (1,4,14):raise ValueError('Unsupported character texture format')
-    bw,bh=(8,4) if kind==1 else (4,4) if kind==4 else (8,8)
+    if kind not in (1,4,5,14):raise ValueError('Unsupported character texture format')
+    bw,bh=(8,4) if kind==1 else (4,4) if kind in (4,5) else (8,8)
     size=((width+bw-1)//bw)*((height+bh-1)//bh)*32
     if len(data)<size:raise ValueError('Truncated texture')
     out=bytearray(width*height*4);cursor=0
@@ -30,7 +30,14 @@ def decode(data,width,height,kind):
                     for x in range(bw):
                         if kind==1:
                             value=data[cursor];cursor+=1;color=(value,value,value,255)
-                        else:color=rgb565(struct.unpack_from('>H',data,cursor)[0]);cursor+=2
+                        else:
+                            word=struct.unpack_from('>H',data,cursor)[0];cursor+=2
+                            if kind==4:color=rgb565(word)
+                            elif word&0x8000:
+                                color=tuple((((word>>s)&31)<<3)|(((word>>s)&31)>>2) for s in (10,5,0))+(255,)
+                            else:
+                                alpha=(word>>12)&7
+                                color=tuple(((word>>s)&15)*17 for s in (8,4,0))+((alpha<<5)|(alpha<<2)|(alpha>>1),)
                         put(bx+x,by+y,color)
     return bytes(out)
 

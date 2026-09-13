@@ -3,6 +3,9 @@
 static Terrain terrain;
 static uint8_t bytes[TERRAIN_MAX_BYTES];
 static Player player;
+int terrain_test_checkpoint(unsigned n,unsigned hash) {
+    RouteCheckpoint c={0};return route_checkpoint_decode(&c,&terrain,bytes,n,hash);
+}
 uint8_t *terrain_test_buffer(void) { return bytes; }
 int terrain_test_load(unsigned n) {
     int ok=terrain_decode(&terrain,bytes,n);
@@ -19,6 +22,9 @@ int terrain_test_hill(unsigned n,unsigned package_hash,unsigned texture_hash) {
     return terrain_hill_decode(&terrain,bytes,n,package_hash,texture_hash);
 }
 unsigned terrain_test_surfaces(void) { return terrain.level.surface_count; }
+int terrain_test_pipe_hill(unsigned n,unsigned hash,unsigned texture) {
+    return terrain_pipe_hill_decode(&terrain,bytes,n,hash,texture);
+}
 void terrain_test_position(float x,float y) {
     player_reset(&player,&terrain.level); player.x=x;player.y=y;
 }
@@ -92,6 +98,70 @@ int run_terrain_tests(void) {
     CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,124,456));
     CHECK(terrain.level.surface_count==terrain.base_surface_count);
     CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES-1,123,456));
+    terrain.level.width=2816;
+    CHECK(terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+    terrain.level.width=3000;
+    CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+    terrain.level.width=2816;
     bytes[40]^=1;CHECK(!terrain_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+    /* Checkpoint uses a separate terrain fixture and never mutates its solids. */
+    terrain=(Terrain){0};terrain.count=1;terrain.solids[0]=(Solid){0,160,2816,64};
+    terrain.level=(MovementLevel){terrain.solids,1,2816,384,64,128,2792,0,0};
+    RouteCheckpoint c={0};
+    for(unsigned i=0;i<CHECKPOINT_BYTES;i++) bytes[i]=0;
+    put32(0,0x314b534e);put32(4,1);put32(8,123);put32(12,400);put32(16,144);
+    put32(20,320);put32(24,128);put32(28,1);put32(36,terrain_hash(bytes,36));
+    CHECK(route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,123));
+    player_reset(&p,&terrain.level);player_power(&p,&terrain.level,POWER_SMALL);a=(Actions){0};
+    CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));
+    p.x=400;a.paused=1;CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));
+    a.paused=0;p.respawn_ticks=1;CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));
+    p.respawn_ticks=0;p.y=160;CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));
+    p.y=144;CHECK(route_checkpoint_step(&c,&terrain,&p,&a));
+    CHECK(c.active&&terrain.level.spawn_x==320&&p.power==POWER_SUPER);
+    CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));
+    for(unsigned death=0;death<10;death++) {
+        p.deaths++;p.respawn_ticks=45;
+        for(unsigned frame=0;frame<45;frame++) player_step(&p,&terrain.level,&a);
+        CHECK(c.active&&p.x==320&&p.y==128&&p.deaths==death+1);
+    }
+    route_checkpoint_reset(&c,&terrain);player_reset(&p,&terrain.level);
+    CHECK(!c.active&&c.ready&&p.x==64);
+    p.x=400;p.y=128;player_power(&p,&terrain.level,POWER_PROPELLER);
+    CHECK(route_checkpoint_step(&c,&terrain,&p,&a)&&p.power==POWER_PROPELLER);
+    route_checkpoint_reset(&c,&terrain);
+    p.finished=1;CHECK(!route_checkpoint_step(&c,&terrain,&p,&a));p.finished=0;
+    p.x=400;p.y=128;CHECK(route_checkpoint_step(&c,&terrain,&p,&a));
+    CHECK(!route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,999));
+    CHECK(!c.ready&&terrain.level.spawn_x==64);
+    put32(20,0xffffffffu);put32(36,terrain_hash(bytes,36));
+    CHECK(!route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,123));
+    put32(20,320);put32(24,144);put32(36,terrain_hash(bytes,36)); /* Embedded in floor. */
+    CHECK(!route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,123));
+    put32(24,96);put32(36,terrain_hash(bytes,36)); /* Unsupported floating entrance. */
+    CHECK(!route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,123));
+    put32(24,128);put32(36,terrain_hash(bytes,36));
+    for(unsigned i=0;i<50;i++) CHECK(route_checkpoint_decode(&c,&terrain,bytes,CHECKPOINT_BYTES,123));
+    for(unsigned i=0;i<HILL_MAX_BYTES;i++) bytes[i]=0;
+    put32(0,0x3148504e);put32(4,1);put32(8,123);put32(12,456);
+    put32(16,1016);put32(20,160);put32(24,160);
+    terrain.hill_surface_count=160; /* Retain an already-loaded opening hill. */
+    for(unsigned i=0;i<160;i++) {
+        union {float f;uint32_t u;} v;
+        v.f=1096+4*i;put32(32+16*i,v.u);v.f=4;put32(36+16*i,v.u);
+        v.f=240;put32(40+16*i,v.u);put32(44+16*i,v.u);
+    }
+    h=2166136261u;
+    for(unsigned i=0;i<HILL_MAX_BYTES;i++) if(i<28||i>=32) h=(h^bytes[i])*16777619u;
+    put32(28,h);
+    for(unsigned i=0;i<50;i++) {
+        CHECK(terrain_pipe_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+        CHECK(terrain.level.surface_count==320);
+    }
+    CHECK(!terrain_pipe_hill_decode(&terrain,bytes,HILL_MAX_BYTES,124,456));
+    CHECK(terrain.level.surface_count==160&&!terrain.pipe_hill_texture_hash);
+    CHECK(!terrain_pipe_hill_decode(&terrain,bytes,HILL_MAX_BYTES-1,123,456));
+    terrain.level.width=1408;CHECK(!terrain_pipe_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
+    terrain.level.width=2816;bytes[40]^=1;CHECK(!terrain_pipe_hill_decode(&terrain,bytes,HILL_MAX_BYTES,123,456));
     return 0;
 }

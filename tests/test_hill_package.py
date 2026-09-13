@@ -5,6 +5,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from package_hill import encode, opening_actor
 from convert_course import fnv1a
+from package_terrain import encode as terrain_encode
 
 
 class HillPackageTests(unittest.TestCase):
@@ -20,7 +21,8 @@ class HillPackageTests(unittest.TestCase):
             with self.assertRaises(ValueError):opening_actor(self.course(settings))
 
     def test_bound_package_and_continuous_cap(self):
-        terrain=bytearray(36);terrain[:4]=b'NST1';struct.pack_into('<II',terrain,12,1408,320)
+        records=[dict(x=496,y=608,slot=1,tile=1,layer=1,flags='0000000100000000',collision='solid',shape=0)]
+        terrain=terrain_encode(records,0)[0]
         b=encode(terrain,b'texture')
         self.assertEqual(len(b),2592)
         self.assertEqual(struct.unpack_from('<II',b,8),(fnv1a(terrain),fnv1a(b'texture')))
@@ -33,6 +35,12 @@ class HillPackageTests(unittest.TestCase):
             self.assertEqual(a[0]+a[1],c[0]);self.assertEqual(a[3],c[2])
         for x,w,left,right in rows:
             self.assertLessEqual(abs(left-right),5.4)
+        longer=terrain_encode(records,0,'checkpoint')[0]
+        rebound=encode(longer,b'texture')
+        self.assertEqual(b[32:],rebound[32:])
+        self.assertEqual(struct.unpack_from('<I',rebound,8)[0],fnv1a(longer))
+        broken=bytearray(longer);broken[-1]^=1
+        with self.assertRaises(ValueError):encode(broken,b'texture')
 
 
 if __name__=='__main__':unittest.main()

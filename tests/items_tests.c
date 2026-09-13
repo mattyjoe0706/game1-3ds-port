@@ -16,6 +16,9 @@ int items_test_load(unsigned n,unsigned hash) {
     return ok;
 }
 int items_test_hill(unsigned n,unsigned hash,unsigned texture) { return terrain_hill_decode(&t,bytes,n,hash,texture); }
+int items_test_pipe_hill(unsigned n,unsigned hash,unsigned texture) { return terrain_pipe_hill_decode(&t,bytes,n,hash,texture); }
+float items_test_x(void) {return player.x;}
+int items_test_finished(void) {return player.finished;}
 unsigned items_test_count(void) {return items.count;}
 unsigned items_test_coins(void) {return items.coins;}
 unsigned items_test_power(void) {return player.power;}
@@ -77,5 +80,28 @@ int run_items_tests(void) {
     items_reset(&items,&t,&player);CHECK(t.solids[2].w==16&&!items.blocks[1].state&&!items.coins);
     player.x=64;player.y=112;player.height=16;
     player_power(&player,&t.level,POWER_PROPELLER);CHECK(player.height==16&&player.crouched); /* Ceiling-safe growth. */
+    /* Content bricks remain solid for Small, Super and Propeller, including
+       after their last coin. Repeated contacts during bump cannot duplicate. */
+    const unsigned powers[]={POWER_SMALL,POWER_SUPER,POWER_PROPELLER};
+    items.blocks[1].contents=2;
+    for(unsigned form=0;form<3;form++) {
+        items_reset(&items,&t,&player);player.x=200;player.y=128;
+        player_power(&player,&t.level,powers[form]);a=(Actions){0};
+        CHECK(items.blocks[1].coins_left==10);
+        for(unsigned coin=0;coin<10;coin++) {
+            player.head_hit=2;items_step(&items,&t,&player,&a);
+            CHECK(items.coins==coin+1&&items.blocks[1].coins_left==9-coin&&t.solids[2].w==16);
+            a.paused=1;player.head_hit=2;items_step(&items,&t,&player,&a);
+            CHECK(items.coins==coin+1&&items.blocks[1].bump==12);a.paused=0;
+            for(unsigned frame=0;frame<11;frame++) {
+                player.head_hit=2;items_step(&items,&t,&player,&a);CHECK(items.coins==coin+1);
+            }
+            player.head_hit=-1;items_step(&items,&t,&player,&a);
+        }
+        CHECK(items.blocks[1].state==1&&items.coins==10);
+        player.head_hit=2;items_step(&items,&t,&player,&a);CHECK(items.coins==10);
+        player.deaths++;items_step(&items,&t,&player,&a);
+        CHECK(items.blocks[1].coins_left==10&&!items.blocks[1].state&&t.solids[2].w==16);
+    }
     return 0;
 }

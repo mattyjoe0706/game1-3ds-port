@@ -31,6 +31,7 @@ static bool character_atlas_view;
 
 static Scene scene;
 static Terrain terrain;
+static RouteCheckpoint route_checkpoint;
 static Enemies enemies;
 static uint8_t enemy_bytes[ENEMY_MAX_BYTES];
 static bool enemies_ready;
@@ -40,6 +41,8 @@ static C3D_Tex terrain_texture;
 static bool terrain_ready;
 static C3D_Tex hill_texture;
 static bool hill_ready;
+static C3D_Tex pipe_hill_texture;
+static bool pipe_hill_ready;
 static uint8_t hill_bytes[HILL_MAX_BYTES];
 
 
@@ -188,7 +191,39 @@ static void load_enemies(void) {
         checkpoint("Enemy data invalid/mismatched; terrain-only mode"); return;
     }
     enemies_ready=true;
-    checkpoint("ENEMY TEST 1: Goomba placements loaded");
+    checkpoint("Enemy placements loaded");
+}
+static void load_pipe_hill(void) {
+    if(terrain.level.width!=2816) return;
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/pipe-hill.nph","rb");
+    if(!f) {checkpoint("Pipe hill missing; route incomplete");return;}
+    size_t n=fread(hill_bytes,1,sizeof(hill_bytes),f);
+    int extra=fgetc(f),error=ferror(f);fclose(f);
+    if(error||extra!=EOF||n!=HILL_MAX_BYTES) {checkpoint("Pipe hill package invalid");return;}
+    if(!C3D_TexInit(&pipe_hill_texture,512,512,GPU_RGBA8)) {checkpoint("Pipe hill allocation failed");return;}
+    f=fopen("sdmc:/3ds/nsmbw-prototype/data/pipe-hill.rgba","rb");
+    if(!f) {C3D_TexDelete(&pipe_hill_texture);checkpoint("Pipe hill texture missing");return;}
+    size_t size=fread(pipe_hill_texture.data,1,TERRAIN_TEXTURE_BYTES,f);
+    extra=fgetc(f);error=ferror(f);fclose(f);
+    if(error||extra!=EOF||size!=TERRAIN_TEXTURE_BYTES||
+       !terrain_pipe_hill_decode(&terrain,hill_bytes,n,terrain_package_hash,terrain_hash(pipe_hill_texture.data,size))) {
+        C3D_TexDelete(&pipe_hill_texture);checkpoint("Pipe hill checksum/geometry mismatch");return;
+    }
+    C3D_TexSetFilter(&pipe_hill_texture,GPU_LINEAR,GPU_LINEAR);
+    C3D_TexSetWrap(&pipe_hill_texture,GPU_CLAMP_TO_EDGE,GPU_CLAMP_TO_EDGE);
+    C3D_TexFlush(&pipe_hill_texture);pipe_hill_ready=true;
+    checkpoint("Static eight-pipe hill loaded; pipe travel not enabled");
+}
+static void load_route_checkpoint(void) {
+    uint8_t bytes[CHECKPOINT_BYTES];
+    FILE *f=fopen("sdmc:/3ds/nsmbw-prototype/data/checkpoint.nsk","rb");
+    if(!f) { checkpoint("Checkpoint data absent; opening-only behavior");return; }
+    size_t n=fread(bytes,1,sizeof(bytes),f);
+    int extra=fgetc(f),error=ferror(f);fclose(f);
+    if(error||extra!=EOF||!route_checkpoint_decode(&route_checkpoint,&terrain,bytes,n,terrain_package_hash)) {
+        checkpoint("Checkpoint invalid/mismatched; not enabled");return;
+    }
+    checkpoint("Checkpoint ready; touch restart resets to entrance");
 }
 static float maxf(float a,float b) { return a>b?a:b; }
 static float minf(float a,float b) { return a<b?a:b; }
@@ -400,8 +435,20 @@ static unsigned draw_terrain(void) {
                         800.0f/512*scale,800.0f/512*scale);
         visible++;
     }
+    if(pipe_hill_ready&&1016+800>camera_x&&1016<camera_x+640) {
+        Tex3DS_SubTexture sub={.width=512,.height=512,.left=0,.top=1,.right=1,.bottom=0};
+        C2D_Image image={&pipe_hill_texture,&sub};
+        C2D_DrawImageAt(image,(1016-camera_x)*scale,7.5f+(160-camera_y)*scale,0,NULL,
+                       800.0f/512*scale,800.0f/512*scale);
+        visible++;
+    }
     draw_items();draw_enemies(false);
     clipped_rect((terrain.level.goal_x-camera_x)*scale,7.5f,2,225,C2D_Color32(93,240,120,255));
+    if(route_checkpoint.ready) {
+        float x=(route_checkpoint.x-camera_x)*scale,y=7.5f+(route_checkpoint.y-32-camera_y)*scale;
+        clipped_rect(x,y,2,48*scale,C2D_Color32(230,230,220,255));
+        clipped_rect(x+2,y,12,8,route_checkpoint.active?C2D_Color32(240,60,60,255):C2D_Color32(30,30,30,255));
+    }
     draw_player();
     draw_enemies(true);
     /* Preserve the 640x360 proportional viewport, including at vertical edges. */
@@ -418,8 +465,12 @@ static int save_samples(const FixedClock *clock) {
     fprintf(f,"# movement test/placement viewer; not Wii gameplay; static_buffers_bytes=%lu; clipped_seconds=%.3f\n",
             (unsigned long)(sizeof(scene)+sizeof(file_bytes)+sizeof(samples)+sizeof(player)+sizeof(terrain)+sizeof(terrain_bytes)+sizeof(enemies)+sizeof(enemy_bytes)+sizeof(character)+sizeof(hill_bytes)),clock->clipped_seconds);
     fprintf(f,"# terrain_texture_bytes=%u; mode3=terrain_slice; mode4=koopa_shell_test; timings_not_full_game\n",(unsigned)(terrain_ready?TERRAIN_TEXTURE_BYTES:0));
+    fprintf(f,"# checkpoint_ready=%u; checkpoint_active=%u; checkpoint_entrance=%u; checkpoint_bytes=%lu\n",
+            route_checkpoint.ready,route_checkpoint.active,route_checkpoint.entrance,(unsigned long)sizeof(route_checkpoint));
     fprintf(f,"# hill_test=1; hill_loaded=%u; hill_texture_bytes=%u; hill_hash=%08lx\n",
             (unsigned)hill_ready,(unsigned)(hill_ready?TERRAIN_TEXTURE_BYTES:0),(unsigned long)terrain.hill_texture_hash);
+    fprintf(f,"# pipe_hill_loaded=%u; pipe_hill_texture_bytes=%u; pipe_hill_hash=%08lx; pipe_travel=0\n",
+            (unsigned)pipe_hill_ready,pipe_hill_ready?TERRAIN_TEXTURE_BYTES:0,(unsigned long)terrain.pipe_hill_texture_hash);
     fprintf(f,"# item_test=1; items_loaded=%u; coins=%u; power=%u; item_buffers_bytes=%lu\n",
             (unsigned)items_ready,items.coins,player.power,(unsigned long)(sizeof(items)+sizeof(item_bytes)));
     fprintf(f,"# item_texture_bytes=%u; item_texture_loaded=%u\n",item_texture_ready?ITEM_TEXTURE_BYTES:0,(unsigned)item_texture_ready);
@@ -492,7 +543,7 @@ int main(void) {
     checkpoint("[10] Loading TERRAIN TEST 1 package");
     if(load_terrain()) mode=3;
     checkpoint(status);
-    if(terrain_ready) { load_hill(); load_enemies();load_items(); }
+    if(terrain_ready) { load_hill();load_pipe_hill(); load_enemies();load_items();load_route_checkpoint(); }
     load_character();character_reset(&character);
     if(!terrain_ready) checkpoint("Using authored course. Add terrain.nst + terrain.rgba, then relaunch.");
     player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
@@ -513,7 +564,7 @@ int main(void) {
         if((down&KEY_SELECT)&&!(held&KEY_START)) {
             mode=(mode+1)%5;
             if(mode==4) enemies_test_scene(&enemies);
-            if(mode==3&&terrain_ready) { enemies_ready=false;enemies.count=0;load_enemies(); }
+            if(mode==3&&terrain_ready) { route_checkpoint_reset(&route_checkpoint,&terrain);enemies_ready=false;enemies.count=0;load_enemies(); }
             character_atlas_view=false;
             if(mode==3&&!terrain_ready) {mode=4;enemies_test_scene(&enemies);}
             input=(InputState){0}; pending=0;
@@ -521,6 +572,7 @@ int main(void) {
             else { player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character); if(mode==3&&items_ready) items_reset(&items,&terrain,&player); camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==4?0:mode==3?-40:160; }
         }
         if((mode==0||mode==3||mode==4)&&(down&KEY_TOUCH)) {
+            if(mode==3) route_checkpoint_reset(&route_checkpoint,&terrain);
             player_reset(&player,active_level()); enemies_reset(&enemies); character_reset(&character);
             if(mode==3&&items_ready) items_reset(&items,&terrain,&player);
             input=(InputState){0}; pending=0;
@@ -538,6 +590,7 @@ int main(void) {
                 if(encounter) encounter_step(&enemies,&player,active_level(),&actions,camera_x);
                 else player_step(&player,active_level(),&actions);
                 if(mode==3&&items_ready) items_step(&items,&terrain,&player,&actions);
+                if(mode==3) route_checkpoint_step(&route_checkpoint,&terrain,&player,&actions);
                 character_step(&character,player.vx,player.grounded,player.crouched,actions.paused,player.respawn_ticks!=0);
                 if(encounter&&enemies_carrying(&enemies)) character.facing=enemies.facing;
                 camera_x=player_camera_x(&player,active_level(),640); camera_y=mode==4?0:mode==3?-40:160;
@@ -550,7 +603,7 @@ int main(void) {
         if(frames&&frames%15==0) {
             consoleClear();
             if(mode==0||mode==3||mode==4) {
-                printf("%s\n\n",mode==4?"KOOPA / SHELL TEST 1\nPlaceholder enemies; no audio":mode==3?(enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
+                printf("%s\n\n",mode==4?"KOOPA / SHELL TEST 1\nPlaceholder enemies; no audio":mode==3?(route_checkpoint.ready?"CHECKPOINT ROUTE PROTOTYPE\nTemporary visuals; no audio":enemies_ready?"ENEMY TEST 1 - World 1-1 opening\nTemporary enemies; no audio":"ENEMY TEST 1 - terrain only\nEnemy data not loaded"):"MOVEMENT TEST 1 - Authored course");
                 printf("D-pad / Circle Pad: move\nA / B: jump (hold for height)\nY / X: run and carry\nDown: crouch   Touch: restart\n");
                 printf("PLAYER FORMS 1: S=%u N=%u P=%u\n",form_ready[0]?1u:0u,character_ready?1u:0u,form_ready[1]?1u:0u);
                 printf("Texture: %08lX  Frame: %u\n",(unsigned long)character_texture_hash,character_frame(&character));
@@ -558,7 +611,8 @@ int main(void) {
                                    player.power==POWER_PROPELLER?"Propeller":player.power==POWER_SUPER?"Super":"Small");
                 else if(mode==0) printf("R: sheet view %s\n",character_atlas_view?"ON (game frozen)":"OFF");
                 if(mode==4) printf("SHELL REFINEMENT 2\nY/X: hold; release both to throw\nCarry poses: %s\nCarry: %d  Stomps: %u  Hits: %u\n",character_carry_ready?"loaded":"OLD DATA - update sprites",enemies_carrying(&enemies),enemies.stomps,enemies.shell_hits);
-                if(mode==3&&enemies_ready) printf("Goombas: %u  Stomps: %u\n",enemies.count,enemies.stomps);
+                if(mode==3&&enemies_ready) printf("Enemies: %u  Stomps: %u\n",enemies.count,enemies.stomps);
+                if(mode==3&&route_checkpoint.ready) printf("Checkpoint: %s\n",route_checkpoint.active?"active":"not reached");
                 printf("Player: %.1f, %.1f\nDeaths: %u  Grounded: %d\n",player.x,player.y,player.deaths,player.grounded);
                 printf("%s\n",player.finished?"FINISHED! Touch to restart":(player.respawn_ticks?"Fell! Restarting...":mode==4?"Stomp, carry, throw; touch to reset":"Reach the green section marker"));
             } else {
@@ -604,6 +658,7 @@ cleanup:
     if(c3d_ready) C3D_FrameSync();
     if(terrain_ready) C3D_TexDelete(&terrain_texture);
     if(hill_ready) C3D_TexDelete(&hill_texture);
+    if(pipe_hill_ready) C3D_TexDelete(&pipe_hill_texture);
     if(item_texture_ready) C3D_TexDelete(&item_texture);
     if(character_ready) C3D_TexDelete(&character_texture);
     for(unsigned i=0;i<2;i++) if(form_ready[i]) C3D_TexDelete(&form_textures[i]);

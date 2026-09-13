@@ -8,6 +8,7 @@ enum { ITEM_COIN=1, ITEM_QUESTION=2, ITEM_BRICK=3 };
 typedef struct {
     unsigned x,y,tile_index,kind,contents,state,bump;
     int solid_index;
+    unsigned coins_left;
 } ItemBlock;
 typedef struct { Player body; unsigned kind,state,age; int direction; float origin_y; } Pickup;
 typedef struct {

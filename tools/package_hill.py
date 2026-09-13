@@ -15,6 +15,7 @@ from character_texture import textures
 from convert_course import fnv1a
 from inspect_assets import unpack_u8, course_blocks
 from gpu_texture import rgba8_tiles
+from route_section import section_named
 
 
 def opening_actor(course):
@@ -32,10 +33,10 @@ def opening_actor(course):
     return found[0]
 
 
-def render(r,size=512):
+def render(r,size=512,model_name='circle_ground_L',clockwise_degrees=0):
     import numpy as np
     from PIL import Image
-    m=model(r,dict(r.resources()['3DModels(NW4R)'])['circle_ground_L'])
+    m=model(r,dict(r.resources()['3DModels(NW4R)'])[model_name])
     tex=textures(r)
     image=np.zeros((size,size,4),dtype=np.uint8)
     # The original planar model is radius 400 in XY; +Y is upward.
@@ -46,6 +47,9 @@ def render(r,size=512):
         pts=np.array([v['position'] for v in tri])
         if np.max(np.abs(pts[:,:2]))>400.01 or np.max(np.abs(pts[:,2]))>0.01:
             raise ValueError('Unexpected circle model bounds')
+        angle=math.radians(clockwise_degrees)
+        c,s=math.cos(angle),math.sin(angle)
+        pts[:,:2]=pts[:,:2]@np.array([[c,-s],[s,c]])
         projected=np.stack(((pts[:,0]+400)*size/800,(400-pts[:,1])*size/800),axis=1)
         a,b,c=projected
         den=(b[1]-c[1])*(a[0]-c[0])+(c[0]-b[0])*(a[1]-c[1])
@@ -69,8 +73,9 @@ def render(r,size=512):
 
 
 def encode(terrain,texture):
-    if len(terrain)<36 or terrain[:4]!=b'NST1' or struct.unpack_from('<II',terrain,12)!=(1408,320):
-        raise ValueError('Expected the matching opening-section terrain package')
+    if len(terrain)<36:raise ValueError('Expected NST1 terrain')
+    width=struct.unpack_from('<I',terrain,12)[0]
+    section_named('checkpoint' if width==2816 else 'opening').validate_terrain(terrain)
     # Editor anchor is top-centre with the standard half-tile X offset.
     # Local centre (968,560), radius 400. Only the upper cap within the crop
     # participates; the lower half must never become a platform underside.

@@ -5,6 +5,11 @@
 #define TERRAIN_MAX_BYTES (36+12*TERRAIN_CAPACITY)
 #define TERRAIN_TEXTURE_BYTES (512*512*4)
 #define HILL_MAX_BYTES (32+160*16)
+#define CHECKPOINT_BYTES 40
+typedef struct {
+    float x,y,spawn_x,spawn_y,initial_x,initial_y;
+    unsigned ready,active,entrance;
+} RouteCheckpoint;
 typedef struct { uint16_t x,y,tile; uint8_t layer; } TerrainTile;
 typedef struct {
     TerrainTile tiles[TERRAIN_CAPACITY];
@@ -14,6 +19,8 @@ typedef struct {
     uint32_t count, texture_hash;
     unsigned base_surface_count;
     uint32_t hill_texture_hash;
+    unsigned hill_surface_count;
+    uint32_t pipe_hill_texture_hash;
 } Terrain;
 uint32_t terrain_hash(const uint8_t *data,size_t length);
 /* On rejection, count and level are cleared. Texture checked separately. */
@@ -21,4 +28,11 @@ int terrain_decode(Terrain *out,const uint8_t *data,size_t length);
 /* Optional speed-zero opening hill. Requires matching terrain and texture. */
 int terrain_hill_decode(Terrain *out,const uint8_t *data,size_t length,
                         uint32_t package_hash,uint32_t texture_hash);
+int terrain_pipe_hill_decode(Terrain *out,const uint8_t *data,size_t length,
+                             uint32_t package_hash,uint32_t texture_hash);
+/* Optional NSK1 record bound to the exact terrain package. Zero-initialize c;
+   reset it before replacing its associated terrain. */
+int route_checkpoint_decode(RouteCheckpoint *c,Terrain *t,const uint8_t *data,size_t length,uint32_t package_hash);
+void route_checkpoint_reset(RouteCheckpoint *c,Terrain *t);
+int route_checkpoint_step(RouteCheckpoint *c,Terrain *t,Player *p,const Actions *a);
 #endif

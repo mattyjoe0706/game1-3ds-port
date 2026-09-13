@@ -25,7 +25,8 @@ int items_decode(Items *o,const uint8_t *b,size_t n,Terrain *t,uint32_t th) {
         v.kind=r[6];v.contents=r[7];v.solid_index=-1;
         if(v.x>=t->level.width||v.y+16>t->level.death_y-64||u32(r+8)||
            (v.kind!=ITEM_COIN&&v.x+16>t->level.width)||
-           v.kind<1||v.kind>3|| (v.kind!=ITEM_QUESTION&&v.contents)||
+           v.kind<1||v.kind>3|| (v.kind==ITEM_COIN&&v.contents)||
+           (v.kind==ITEM_BRICK&&v.contents!=0&&v.contents!=2)||
            (v.kind==ITEM_QUESTION&&v.contents!=0&&v.contents!=7)) return 0;
         if(v.tile_index!=65535) {
             if(v.tile_index>=t->count) return 0;
@@ -46,6 +47,7 @@ void items_reset(Items *o,Terrain *t,Player *p) {
     o->coins=o->collected=0;o->last_deaths=p->deaths;
     for(unsigned i=0;i<o->count;i++) {
         ItemBlock *v=&o->blocks[i];v->state=v->bump=0;
+        v->coins_left=v->kind==ITEM_BRICK&&v->contents==2?10:0;
         if(v->solid_index>=0) t->solids[v->solid_index].w=16;
     }
     for(unsigned i=0;i<ITEM_POOL;i++) o->pickups[i]=(Pickup){0};
@@ -63,7 +65,12 @@ void items_step(Items *o,Terrain *t,Player *p,const Actions *a) {
             if(overlap(p->x,16,v->x,16)&&overlap(p->y,p->height,v->y,16)) { v->state=1;o->coins++; }
         } else if(p->head_hit==v->solid_index&&!v->bump) {
             v->bump=12;
-            if(v->kind==ITEM_BRICK) {
+            if(v->kind==ITEM_BRICK&&v->contents==2) {
+                /* Source object 28: ten-coin brick. Reuse the prototype bump
+                   cooldown; exact Wii timing/depletion rules await comparison. */
+                if(v->coins_left) { v->coins_left--;o->coins++; }
+                if(!v->coins_left) v->state=1;
+            } else if(v->kind==ITEM_BRICK) {
                 if(p->power!=POWER_SMALL) { v->state=2;t->solids[v->solid_index].w=0; }
             } else {
                 int reward=item_reward(v->contents,p->power);

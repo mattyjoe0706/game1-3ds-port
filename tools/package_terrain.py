@@ -5,9 +5,10 @@ import json
 from pathlib import Path
 import struct
 from convert_tiles import convert, lz11, rgb5a3
-from convert_course import fnv1a
+from convert_course import fnv1a,decode_course
 from inspect_assets import unpack_u8
 from gpu_texture import rgba8_tiles
+from route_section import SECTIONS, section_named
 
 SLOPES={0:(16,0),1:(0,16),2:(16,8),3:(8,0),4:(0,8),5:(8,16),
         11:(16,12),12:(12,8),13:(8,4),14:(4,0),15:(0,4),16:(4,8),17:(8,12),18:(12,16)}
@@ -33,11 +34,21 @@ def gpu_atlas(textures):
                     result[dst:dst+4]=texture[src:src+4]
     return rgba8_tiles(result,512,512)
 
-def encode(records,texture_hash):
+def encode(records,texture_hash,section='opening',actors=()):
+    bounds=section_named(section)
+    records=list(records)
+    for actor in actors:
+        if actor.get('area',1)!=1 or actor.get('kind')!=1 or actor['id']!=422 or not bounds.contains(actor):continue
+        if actor['param'] or actor.get('layer',0):raise ValueError('Unsupported Toad-block actor settings')
+        if any(r['layer']==1 and (r['x'],r['y'])==(actor['x'],actor['y']) for r in records):
+            raise ValueError('Toad block overlaps an existing terrain tile')
+        # Fresh single-player prototype has no world-map Toad Rescue active.
+        records.append(dict(x=actor['x'],y=actor['y'],slot=0,tile=49,layer=1,
+                            collision='solid',shape=0,flags='0000000100000000'))
     payload=bytearray()
     omitted=0
     for r in sorted(records,key=lambda r:-r['layer']):
-        if not (496<=r['x']<1904 and 384<=r['y']<704):
+        if not bounds.contains(r):
             continue
         # Invisible marker tiles are inspection visuals, not terrain.
         if r['flags']=='0000000000000028':
@@ -56,16 +67,17 @@ def encode(records,texture_hash):
                 raise ValueError(f'Unsupported collision in slice: {tag}/{r["shape"]}')
             elif tag=='other' and r['flags']!='0000000200000000':
                 raise ValueError(f'Unknown collision flags: {r["flags"]}')
-        payload.extend(struct.pack('<HHHBBBBH',r['x']-496,r['y']-384,r['slot']*256+r['tile'],
+        payload.extend(struct.pack('<HHHBBBBH',r['x']-bounds.x,r['y']-bounds.y,r['slot']*256+r['tile'],
                                    kind,left,right,r['layer'],0))
     count=len(payload)//12
     if not 0<count<=2048:
         raise ValueError('Terrain capacity exceeded')
     # Original entrance X=752; spawn feet aligned to original ground Y=608.
-    head=struct.pack('<4s7I',b'NST1',1,count,1408,320,256,192,texture_hash)
+    head=struct.pack('<4s7I',b'NST1',1,count,bounds.width,bounds.height,bounds.spawn_x,bounds.spawn_y,texture_hash)
     return head+struct.pack('<I',fnv1a(head+payload))+payload,omitted
 
-def package(extracted,output):
+def package(extracted,output,section='opening'):
+    bounds=section_named(section)
     extracted,output=Path(extracted).resolve(),Path(output).resolve()
     if output.exists() or extracted==output or extracted in output.parents or output in extracted.parents:
         raise ValueError('Choose a new output directory separate from extraction')
@@ -81,16 +93,20 @@ def package(extracted,output):
         textures[slot]=rgb5a3(lz11(entries[f'BG_tex/{name}_tex.bin.LZ']))
     atlas=gpu_atlas(textures)
     records=json.loads((output/'inspection/terrain.json').read_text())
-    data,omitted=encode(records,fnv1a(atlas))
+    stage=unpack_u8((extracted/'files/Stage/01-01.arc').read_bytes())
+    actors=decode_course(stage['course/course1.bin'],{})['records']
+    data,omitted=encode(records,fnv1a(atlas),section,actors)
     target=output/'SD-ROOT/3ds/nsmbw-prototype/data'
     target.mkdir(parents=True)
     (target/'terrain.nst').write_bytes(data)
     (target/'terrain.rgba').write_bytes(atlas)
     report={'format':'NST1','version':1,'packing_revision':2,'native_build':'TERRAIN TEST 1',
-            'world_bounds':[496,384,1408,320],'tiles':(len(data)-36)//12,
+            'section':section,'world_bounds':[bounds.x,bounds.y,bounds.width,bounds.height],'tiles':(len(data)-36)//12,
+            'route_playable':False,
             'omitted_marker_tiles':omitted,'texture_bytes':len(atlas),
             'files':{n:hashlib.sha256((target/n).read_bytes()).hexdigest() for n in ('terrain.nst','terrain.rgba')},
-            'limitations':['Opening section only; approximate player physics.',
+            'limitations':['Static terrain conversion only; does not establish playable route coverage.',
+                           'Checkpoint section requires new hill, reward and checkpoint runtime support before delivery.',
                            'Static textures; coins decorative; blocks do not release items.',
                            'Enemy data must be regenerated against the updated terrain checksum.',
                            'Background scenes and audio are absent; companion packages provide Mario/enemies.',
@@ -101,6 +117,7 @@ def package(extracted,output):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('extracted',type=Path);p.add_argument('output',type=Path)
+    p.add_argument('--section',choices=SECTIONS,default='opening')
     a=p.parse_args()
-    try:print(json.dumps(package(a.extracted,a.output),indent=2))
+    try:print(json.dumps(package(a.extracted,a.output,a.section),indent=2))
     except (ValueError,OSError,KeyError) as e:p.exit(1,f'Packaging failed: {e}\n')
