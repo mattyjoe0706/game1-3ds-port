@@ -10,7 +10,7 @@ typedef struct {
     float spawn_x,spawn_y,previous_y;
     int direction;
     unsigned state,timer;
-    unsigned kind,variant,owner_grace;
+    unsigned kind,variant,owner_grace,pickup_bounce;
 } Enemy;
 typedef struct { Enemy items[ENEMY_CAPACITY]; unsigned count,stomps,shell_hits; int facing; } Enemies;
 int enemies_carrying(const Enemies *enemies);

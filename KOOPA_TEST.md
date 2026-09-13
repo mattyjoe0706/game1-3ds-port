@@ -1,5 +1,19 @@
 # Koopa / Shell Test 1
 
+## Bounce pickup correction
+
+A stomp now leaves the newly stopped shell on the ground during Mario's upward
+bounce. Holding Y/X picks it up when Mario descends back into the existing pickup
+zone. This applies to walking Koopas and moving shells, replacing refinement 2's
+immediate catch of a moving shell. There is no fixed timer or ground-only pickup
+restriction. Ordinary unstomped shells retain airborne pickup and the wider zone.
+
+Portable tests cover both enemy states, short/high bounces, Y/X, pause, reset,
+descent pickup without a fresh press, and throw after pickup. All six portable
+test groups pass. Exact Wii timing and handheld behavior remain unverified.
+This is an executable-only change; use the complete build-16 data set, including
+all terrain/area/item files and the 32-frame Mario sheets, in the next delivery.
+
 ## Shell refinement 2
 
 Y and X both run and carry; B and A jump. Keep either carry button held to retain
@@ -9,8 +23,8 @@ https://www.nintendo.com/eu/media/downloads/games_8/emanuals/nintendo_3ds_2/new_
 
 Stopped-shell pickup now accepts an 8-unit horizontal margin and up to 6 units
 above its top, and is checked after movement as well as before it. These margins
-are prototype tuning, not measured Wii constants. Holding Y/X while stomping a
-moving shell catches the stopped shell during the bounce. Side contact with a
+are prototype tuning, not measured Wii constants. Holding Y/X after stomping a
+moving shell catches it on the return into range after the upward bounce. Side contact with a
 moving shell still damages Mario. The local Wii shell source restricts normal
 carry checks to its Sleep state; it does not justify making moving shells harmless.
 

@@ -15,6 +15,7 @@ static int pickup_index(const Enemies *all,const Player *p) {
     if(p->respawn_ticks||p->finished||enemies_carrying(all)) return -1;
     for(unsigned i=0;i<all->count;i++) {
         const Enemy *e=&all->items[i];
+        if(e->pickup_bounce&&p->vy<0) continue;
         if(e->state==ENEMY_SHELL_IDLE&&overlap(p->x-8,32,e->body.x,16)&&
            p->y<e->body.y+16&&p->y+p->height>=e->body.y-6) return (int)i;
     }
@@ -30,6 +31,7 @@ void enemies_test_scene(Enemies *all) {
     enemies_reset(all);
 }
 static void kick(Enemy *e,int direction) {
+    e->pickup_bounce=0;
     e->state=ENEMY_SHELL_MOVING;e->direction=direction;e->timer=0;e->owner_grace=4;
 }
 static void drop_carried(Enemies *all) {
@@ -53,7 +55,7 @@ void enemies_reset(Enemies *out) {
     for(unsigned i=0;i<out->count;i++) {
         Enemy *e=&out->items[i];
         e->body=(Player){0}; e->body.x=e->spawn_x;e->body.y=e->spawn_y;e->body.height=16;
-        e->previous_y=e->spawn_y;e->state=e->timer=e->owner_grace=0;e->direction=-1;
+        e->previous_y=e->spawn_y;e->state=e->timer=e->owner_grace=e->pickup_bounce=0;e->direction=-1;
     }
 }
 int enemies_decode(Enemies *out,const uint8_t *data,size_t n,uint32_t terrain_hash,const MovementLevel *l) {
@@ -91,6 +93,7 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
     }
     for(unsigned i=0;i<all->count;i++) {
         Enemy *e=&all->items[i];
+        if(p->vy>=0) e->pickup_bounce=0;
         if(e->state==0) {
             if(e->spawn_x>camera_x+704||e->spawn_x+16<camera_x-64) continue;
             e->state=1;e->direction=p->x<e->body.x?-1:1;
@@ -146,9 +149,9 @@ void encounter_step(Enemies *all,Player *p,const MovementLevel *l,const Actions 
             if(e->kind==57) {
                 if(e->state==ENEMY_SHELL_IDLE) kick(e,p->x<e->body.x?1:-1);
                 else {
-                    unsigned was_moving=e->state==ENEMY_SHELL_MOVING;
                     e->state=ENEMY_SHELL_IDLE;e->timer=SHELL_SLEEP;e->body.vx=0;
-                    if(was_moving&&a->pickup_armed&&!enemies_carrying(all)) e->state=ENEMY_CARRIED;
+                    /* Finish the upward stomp bounce before this shell can be picked up. */
+                    e->pickup_bounce=1;
                 }
             } else {e->state=2;e->timer=20;}
             all->stomps++;stomp=1;

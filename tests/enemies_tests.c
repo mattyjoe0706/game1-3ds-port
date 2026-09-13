@@ -154,10 +154,50 @@ static int run_held_approach_tests(void) {
     }
     return 0;
 }
+static int run_bounce_pickup_tests(void) {
+    for(int moving=0;moving<2;moving++) for(int high=0;high<2;high++)
+    for(int xbutton=0;xbutton<2;xbutton++) {
+        Enemies e;Player p;InputState input={0};
+        enemies_test_scene(&e);e.count=1;
+        e.items[0].state=moving?ENEMY_SHELL_MOVING:ENEMY_WALK;
+        e.items[0].body.x=300;e.items[0].direction=1;
+        player_reset(&p,&shell_test_level);p.x=300;p.y=106;p.vy=6;
+        uint32_t buttons=(xbutton?BTN_X:BTN_Y)|(high?BTN_B:0);
+        Actions a=input_step(&input,buttons,0,0,enemies_can_pickup(&e,&p));
+        encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(e.items[0].state==ENEMY_SHELL_IDLE&&e.items[0].pickup_bounce&&p.vy<0);
+        CHECK(!enemies_can_pickup(&e,&p));
+        float y=p.y;unsigned timer=e.items[0].timer;
+        a.paused=1;
+        for(int i=0;i<10;i++) encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(p.y==y&&e.items[0].timer==timer&&e.items[0].pickup_bounce);
+        unsigned rising=0;int caught=0;
+        for(int tick=0;tick<100;tick++) {
+            if(p.vy<0) {CHECK(!enemies_can_pickup(&e,&p));rising++;}
+            input.carrying=enemies_carrying(&e);
+            a=input_step(&input,buttons,0,0,enemies_can_pickup(&e,&p));
+            encounter_step(&e,&p,&shell_test_level,&a,0);
+            CHECK(!p.respawn_ticks);
+            if(p.vy<0) CHECK(!enemies_carrying(&e));
+            if(enemies_carrying(&e)) {CHECK(p.vy>=0);caught=1;break;}
+        }
+        CHECK(rising>1&&caught); /* No new button press is required on descent. */
+        input.carrying=1;a=input_step(&input,0,0,0,0);
+        encounter_step(&e,&p,&shell_test_level,&a,0);
+        CHECK(e.items[0].state==ENEMY_SHELL_MOVING);
+        e.items[0].pickup_bounce=1;enemies_reset(&e);CHECK(!e.items[0].pickup_bounce);
+        /* Ordinary airborne side pickup of an unstomped shell remains possible. */
+        e.items[0].state=ENEMY_SHELL_IDLE;e.items[0].body.x=300;
+        player_reset(&p,&shell_test_level);p.x=279;p.vy=-1;
+        CHECK(enemies_can_pickup(&e,&p));
+    }
+    return 0;
+}
 int run_enemies_tests(void) {
     int r=run_goomba_tests();if(r)return r;
     r=run_shell_tests();if(r)return r;
     r=run_held_approach_tests();if(r)return r;
+    r=run_bounce_pickup_tests();if(r)return r;
     for(int moving=0;moving<2;moving++) for(int hold=0;hold<2;hold++) {
         Enemies e;Player p;InputState input={0};
         enemies_test_scene(&e);e.count=1;
@@ -167,12 +207,12 @@ int run_enemies_tests(void) {
         Actions a=input_step(&input,hold?BTN_Y:0,0,0,enemies_can_pickup(&e,&p));
         encounter_step(&e,&p,&shell_test_level,&a,0);
         CHECK(!p.respawn_ticks);
-        CHECK(e.items[0].state==(hold?ENEMY_CARRIED:moving?ENEMY_SHELL_IDLE:ENEMY_SHELL_MOVING));
+        CHECK(e.items[0].state==(moving?ENEMY_SHELL_IDLE:hold?ENEMY_CARRIED:ENEMY_SHELL_MOVING));
         if(hold) {
             input.carrying=enemies_carrying(&e);
             a=input_step(&input,BTN_Y,0,0,0);
             encounter_step(&e,&p,&shell_test_level,&a,0);
-            CHECK(enemies_carrying(&e)&&!a.throw_object);
+            CHECK(enemies_carrying(&e)==!moving&&!a.throw_object);
         }
     }
     /* Holding run is not immunity to a moving shell's side collision. */
